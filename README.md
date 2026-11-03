@@ -21,7 +21,7 @@ You need **Node.js 20.9 or newer** (check with `node -v`) and Git.
 ### 1. Clone and install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/VivekCoderz/Comets-URL-Shortener-with-Analytics-.git
 cd Comets-URL-Shortener-with-Analytics-
 npm install
 ```
