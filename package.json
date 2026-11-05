@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "try:link": "node --env-file=.env.local scripts/try-link.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.41.0",
