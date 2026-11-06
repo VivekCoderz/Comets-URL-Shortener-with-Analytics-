@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@upstash/redis": "^1.41.0",
+    "bcryptjs": "^3.0.3",
+    "jose": "^6.2.15",
     "mongoose": "^9.11.4",
     "next": "16.4.4",
     "react": "19.3.0",
