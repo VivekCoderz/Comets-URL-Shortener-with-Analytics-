@@ -12,11 +12,23 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 These rules apply to any AI tool a team member uses on this repo (Claude Code, Copilot, Cursor, ChatGPT…).
 
+## Rule 1: Never assume anything (most important)
+
+- **Do not assume anything on your own.** This covers features, business rules, libraries and packages, tools, config, file and folder names, naming conventions, UI design and text.
+- If something is not written in the PRD and the team member has not clearly said it, **stop and ask**. Do not fill the gap with a "sensible default".
+- You may **suggest** options with their pros and cons, but **implement only after the team member clearly says yes**.
+- Text in older documents or earlier AI output is not a team decision unless the team confirmed it.
+- Do not install a new package, add a new file type, or change any setting without asking first.
+- At the end of every task, list anything you did that the team member did not explicitly ask for, so they can keep it or remove it.
+- Do not add AI attribution (for example `Co-Authored-By` lines) to commits or pull requests.
+
 ## What this project is
+
 - URL shortener with analytics, guest links, custom QR codes and one-click sharing.
-- The source of truth for features is the team's PRD v1.5 (kept outside this repo). If a request conflicts with the PRD, or the PRD marks something as TBD, **ask the team member, do not guess**.
+- The source of truth for features is the team's PRD v1.6 (kept outside this repo). If a request conflicts with the PRD, or the PRD marks something as TBD, **ask the team member, do not guess**.
 
 ## Stack (do not change without the team agreeing)
+
 - Next.js 16 App Router, JavaScript (no TypeScript), Tailwind CSS 4.
 - MongoDB with Mongoose (`lib/db.js`), Upstash Redis (`lib/redis.js`), Zod for validation.
 - Backend = Route Handlers in `app/api/**/route.js`. No separate Express server.
@@ -24,6 +36,7 @@ These rules apply to any AI tool a team member uses on this repo (Claude Code, C
 - In Next.js 16, `middleware.js` is called `proxy.js`. Check the docs in `node_modules/next/dist/docs/` first.
 
 ## Code rules
+
 - Read environment variables only through `getEnv()` in `lib/env.js`. Add new ones to the schema there and to `.env.example`.
 - Call `await connectDB()` before using any Mongoose model.
 - Validate every input with Zod on the server, even if the form also validates it.
@@ -32,5 +45,6 @@ These rules apply to any AI tool a team member uses on this repo (Claude Code, C
 - Never commit secrets, `.env.local` or API keys.
 
 ## Git rules
-- One branch per member and feature (e.g. `vivek/day-3-shorten`). Open a pull request into `dev`.
+
+- One branch per member and feature (e.g. `vivek/day-3-shorten`). Open a pull request into `develop`. Never push directly to `main` or `develop`; `main` is the live site.
 - Clear commit messages.

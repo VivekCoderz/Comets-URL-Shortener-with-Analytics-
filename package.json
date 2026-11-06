@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "try:link": "node --env-file=.env.local scripts/try-link.js",
     "test": "vitest run"
   },
   "dependencies": {
