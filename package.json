@@ -6,10 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "try:link": "node --env-file=.env.local scripts/try-link.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@upstash/redis": "^1.41.0",
+    "bcryptjs": "^3.0.3",
+    "jose": "^6.2.15",
     "mongoose": "^9.11.4",
     "next": "16.4.4",
     "react": "19.3.0",
@@ -21,7 +25,8 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.4",
-    "tailwindcss": "^4"
+    "tailwindcss": "^4",
+    "vitest": "^5.1.0"
   },
   "engines": {
     "node": ">=20.9.0"
