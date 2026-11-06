@@ -1,6 +1,6 @@
 # models/
 
-Mongoose models live here, one file per collection. The fields and indexes are in PRD v1.5, section 8.
+Mongoose models live here, one file per collection. The fields and indexes are in PRD v1.6, section 8.
 
 Day 1 tasks (PRD section 11.1):
 
