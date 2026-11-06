@@ -12,7 +12,7 @@ Day 1 tasks (PRD section 11.1):
 Always export models like this, so hot reload does not throw `OverwriteModelError`:
 
 ```js
-import { Schema, model, models } from "mongoose";
+import mongoose, { Schema } from "mongoose";
 
 const linkSchema = new Schema(
   {
@@ -22,7 +22,7 @@ const linkSchema = new Schema(
   { timestamps: true },
 );
 
-export const LinkModel = models.Link || model("Link", linkSchema);
+export const LinkModel = mongoose.models.Link || mongoose.model("Link", linkSchema);
 ```
 
 Before using a model in a route handler, call `await connectDB()` from `@/lib/db`.
