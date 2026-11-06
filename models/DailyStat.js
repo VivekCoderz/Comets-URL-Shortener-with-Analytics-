@@ -1,4 +1,4 @@
-import { Schema, model, models } from "mongoose";
+import mongoose, { Schema } from "mongoose";
 
 // One document per link per IST day. PRD section 8.5.
 // The click flush adds to these with $inc upserts, so dashboards never scan raw clicks.
@@ -31,4 +31,4 @@ dailyStatSchema.index({ linkId: 1, day: 1 }, { unique: true });
 // The dashboard overview reads all of a user's days.
 dailyStatSchema.index({ userId: 1, day: 1 });
 
-export const DailyStatModel = models.DailyStat || model("DailyStat", dailyStatSchema);
+export const DailyStatModel = mongoose.models.DailyStat || mongoose.model("DailyStat", dailyStatSchema);
