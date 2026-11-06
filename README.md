@@ -61,6 +61,7 @@ If a part says `"ok": false`, its `error` field tells you what is wrong (usually
 | `npm run build` | Production build (also checks the code compiles) |
 | `npm run start` | Run the production build |
 | `npm run lint` | ESLint |
+| `npm test` | Run the Vitest tests in `tests/` (uses the database in `.env.local`) |
 
 ## Folder structure
 

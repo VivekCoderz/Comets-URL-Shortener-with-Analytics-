@@ -1,4 +1,4 @@
-import { Schema, model, models } from "mongoose";
+import mongoose, { Schema } from "mongoose";
 
 // One document per redirect (a raw click event). PRD section 8.3.
 // Only the click flush writes here, in batches (PRD section 4.2).
@@ -38,4 +38,4 @@ clickSchema.index({ linkId: 1, clickedAt: -1 });
 // Daily totals stay in dailystats.
 clickSchema.index({ clickedAt: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 });
 
-export const ClickModel = models.Click || model("Click", clickSchema);
+export const ClickModel = mongoose.models.Click || mongoose.model("Click", clickSchema);

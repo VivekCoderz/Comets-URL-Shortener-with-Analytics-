@@ -1,4 +1,4 @@
-import { Schema, model, models } from "mongoose";
+import mongoose, { Schema } from "mongoose";
 
 export const API_KEY_SCOPES = ["links:read", "links:write", "analytics:read"];
 
@@ -35,4 +35,4 @@ const apiKeySchema = new Schema(
 // Listing a user's keys and counting active ones (max 5) filters on revokedAt.
 apiKeySchema.index({ userId: 1, revokedAt: 1 });
 
-export const ApiKeyModel = models.ApiKey || model("ApiKey", apiKeySchema);
+export const ApiKeyModel = mongoose.models.ApiKey || mongoose.model("ApiKey", apiKeySchema);
