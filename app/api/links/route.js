@@ -4,7 +4,12 @@ import { generateCode } from "@/lib/codeGen";
 import { connectDB } from "@/lib/db";
 import { apiError, readJson } from "@/lib/errors";
 import { publicLink } from "@/lib/links";
-import { firstIssue, listLinksQuerySchema, longUrlSchema } from "@/lib/validators";
+import {
+  customAliasSchema,
+  firstIssue,
+  listLinksQuerySchema,
+  longUrlSchema,
+} from "@/lib/validators";
 import { LinkModel } from "@/models/Link";
 
 // GET /api/links?page=1&limit=20  →  200 { links, page, limit, total }
@@ -37,19 +42,23 @@ export async function GET(request) {
   return Response.json({ links: links.map(publicLink), page, limit, total });
 }
 
-// CMT-12: only longUrl for now. Alias, title, expiry, password, QR style and
-// the duplicate check (forceNew) are added on their own days.
-const createLinkSchema = z.object({ longUrl: longUrlSchema });
+const createLinkSchema = z.object({
+  longUrl: longUrlSchema,
+  alias: customAliasSchema.optional(),
+});
 
 // How many new codes we try before giving up (PRD business rule 7.1).
 const MAX_TRIES = 5;
 
-// POST /api/links  { longUrl }  →  201 { link }   (link.shortUrl is the short link)
+// POST /api/links  { longUrl, alias? }  →  201 { link }
 // Works for guests (no cookie) and for logged-in users (board task CMT-12).
 export async function POST(request) {
   const parsed = createLinkSchema.safeParse(await readJson(request));
-  if (!parsed.success) return apiError("INVALID_URL", firstIssue(parsed.error), 400);
-  const { longUrl } = parsed.data;
+  if (!parsed.success) {
+    const errorCode = parsed.error.issues[0]?.path[0] === "alias" ? "INVALID_ALIAS" : "INVALID_URL";
+    return apiError(errorCode, firstIssue(parsed.error), 400);
+  }
+  const { longUrl, alias } = parsed.data;
 
   // null = guest. Guest links are saved with userId: null.
   const user = await getCurrentUser();
@@ -65,15 +74,20 @@ export async function POST(request) {
   for (let attempt = 1; attempt <= MAX_TRIES && !link; attempt++) {
     try {
       link = await LinkModel.create({
-        code: generateCode(),
+        code: alias ?? generateCode(),
         longUrl,
         userId: user?._id ?? null,
         createdVia: user ? "dashboard" : "guest",
+        isCustomAlias: Boolean(alias),
       });
     } catch (error) {
       // Only a clash on `code` is worth retrying; anything else is a real error.
-      const codeClash = error?.code === 11000 && error.keyPattern?.code;
+      const codeClash =
+        error?.code === 11000 && (error.keyPattern?.code || error.keyValue?.code);
       if (!codeClash) throw error;
+      if (alias) {
+        return apiError("ALIAS_TAKEN", "This alias is already in use", 409);
+      }
     }
   }
 
