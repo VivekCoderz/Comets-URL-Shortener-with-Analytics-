@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "try:link": "node --env-file=.env.local scripts/try-link.js",
+    "try:shorten": "node --env-file=.env.local scripts/try-shorten.js",
     "test": "vitest run"
   },
   "dependencies": {
