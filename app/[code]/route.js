@@ -1,8 +1,7 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { after, connection, NextResponse } from "next/server";
 import { pushClickEvent } from "@/lib/clicks";
 import { connectDB } from "@/lib/db";
-import { getEnv } from "@/lib/env";
 import {
   cacheMissingLink,
   cacheRedirectLink,
@@ -15,41 +14,18 @@ import { z } from "zod";
 
 const codeSchema = z.string().min(1);
 
-function istDate(date) {
-  const parts = new Intl.DateTimeFormat("en", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
 function clickEvent(request, link, clickedAt) {
-  const forwardedIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const ip = forwardedIp || request.headers.get("x-real-ip") || "";
-  const userAgent = request.headers.get("user-agent") || "";
-  const visitorHash = createHmac("sha256", getEnv().JWT_SECRET)
-    .update(`${ip}${userAgent}${istDate(clickedAt)}`)
-    .digest("hex");
-  const referrer = request.headers.get("referer");
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "";
 
   return {
     eventId: randomUUID(),
     linkId: link.id,
-    userId: link.userId,
-    // The flush (lib/clicks.js, CMT-22) reads the redirect time from `time`.
     time: clickedAt.toISOString(),
-    clickedAt: clickedAt.toISOString(),
-    visitorHash,
-    // Raw user-agent, so the enrichment step (CMT-24) can find device, browser and bots.
-    userAgent,
+    ip,
+    ua: request.headers.get("user-agent") || "",
+    referrer: request.headers.get("referer") || "",
     country: request.headers.get("x-vercel-ip-country") || "Unknown",
-    referrer: referrer && URL.canParse(referrer) ? new URL(referrer).hostname : "",
-    source: "link",
-    isBot: false,
-    isRefresh: false,
+    source: new URL(request.url).searchParams.get("src") === "qr" ? "qr" : "link",
   };
 }
 
@@ -114,7 +90,8 @@ export async function GET(request, { params }) {
   }
 
   const clickedAt = new Date();
-  after(() => pushClickEvent(clickEvent(request, link, clickedAt)));
+  const event = clickEvent(request, link, clickedAt);
+  after(() => pushClickEvent(event));
 
   return NextResponse.redirect(link.url, 302);
 }
