@@ -76,6 +76,8 @@ describe("alias rules (unit)", () => {
         "api", "login", "signup", "logout", "dashboard", "p", "expired", "admin",
         "health", "pricing", "_next", "static", "assets", "qr", "docs", "help",
         "settings", "favicon.ico", "robots.txt",
+        // Added with CMT-19: the page unknown short codes are sent to.
+        "link-not-found",
       ].sort(),
     );
     expect(isReserved("Login")).toBe(true);
