@@ -20,7 +20,12 @@ export default function Home() {
   // The link returned by POST /api/links, or null while the form is shown.
   const [link, setLink] = useState(null);
 
-  return link ? <Result link={link} onReset={() => setLink(null)} /> : <Hero onCreated={setLink} />;
+  // A new link and an existing one picked in the duplicate prompt both show the result view.
+  return link ? (
+    <Result link={link} onReset={() => setLink(null)} />
+  ) : (
+    <Hero onCreated={(created) => setLink(created)} />
+  );
 }
 
 // The gradient square with a white dot: the Comets logo from the screens.
