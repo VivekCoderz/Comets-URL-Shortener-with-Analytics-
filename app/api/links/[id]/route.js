@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { getCurrentUser } from "@/lib/auth";
 import { apiError, readJson } from "@/lib/errors";
+import { deleteLinkCache } from "@/lib/linkCache";
 import { publicLink } from "@/lib/links";
 import { editLinkSchema, firstIssue } from "@/lib/validators";
 import { LinkModel } from "@/models/Link";
@@ -39,8 +40,9 @@ export async function PATCH(request, { params }) {
   }
   await link.save();
 
-  // TODO CMT-20 (Imran): delete the Redis cache key for link.code here, so the
-  // redirect uses the new destination on the very next click.
+  // Remove the old cached copy so the redirect uses the new destination (or
+  // the new active/disabled state) on the very next click (PRD FR-05, T6).
+  await deleteLinkCache(link.code);
   return Response.json({ link: publicLink(link) });
 }
 
@@ -58,6 +60,7 @@ export async function DELETE(_request, { params }) {
   link.isDeleted = true;
   await link.save();
 
-  // TODO CMT-20 (Imran): delete the Redis cache key for link.code here too.
+  // Remove the cached copy so a deleted link stops redirecting right away.
+  await deleteLinkCache(link.code);
   return Response.json({ ok: true });
 }

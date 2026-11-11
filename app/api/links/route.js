@@ -4,7 +4,12 @@ import { generateCode } from "@/lib/codeGen";
 import { connectDB } from "@/lib/db";
 import { apiError, readJson } from "@/lib/errors";
 import { publicLink } from "@/lib/links";
-import { firstIssue, listLinksQuerySchema, longUrlSchema } from "@/lib/validators";
+import {
+  aliasSchema,
+  firstIssue,
+  listLinksQuerySchema,
+  longUrlSchema,
+} from "@/lib/validators";
 import { LinkModel } from "@/models/Link";
 
 // GET /api/links?page=1&limit=20  →  200 { links, page, limit, total }
@@ -37,19 +42,38 @@ export async function GET(request) {
   return Response.json({ links: links.map(publicLink), page, limit, total });
 }
 
-// CMT-12: only longUrl for now. Alias, title, expiry, password, QR style and
-// the duplicate check (forceNew) are added on their own days.
-const createLinkSchema = z.object({ longUrl: longUrlSchema });
+// CMT-12 added longUrl; CMT-15 adds alias (FR-04) and forceNew (FR-04b).
+// Title, expiry, password and QR style are added on their own days.
+const createLinkSchema = z.object({
+  longUrl: longUrlSchema,
+  alias: aliasSchema.optional(),
+  forceNew: z.boolean({ error: "forceNew must be true or false" }).optional(),
+});
+
+// Picks the error code for a failed body: the alias rules set their own code
+// (INVALID_ALIAS or RESERVED_ALIAS) in `params.apiCode`.
+function createErrorCode(error) {
+  const issue = error.issues[0];
+  if (issue?.path[0] === "longUrl") return "INVALID_URL";
+  if (issue?.path[0] === "alias") return issue.params?.apiCode ?? "INVALID_ALIAS";
+  return "VALIDATION_ERROR";
+}
 
 // How many new codes we try before giving up (PRD business rule 7.1).
 const MAX_TRIES = 5;
 
-// POST /api/links  { longUrl }  →  201 { link }   (link.shortUrl is the short link)
-// Works for guests (no cookie) and for logged-in users (board task CMT-12).
+// POST /api/links  { longUrl, alias?, forceNew? }
+//   → 201 { link }                       new link (link.shortUrl is the short link)
+//   → 200 { duplicate: true, existing }  logged-in user already shortened this URL
+//   → 409 ALIAS_TAKEN                    someone already has this alias
+// Works for guests (no cookie) and for logged-in users (board tasks CMT-12, CMT-15).
 export async function POST(request) {
   const parsed = createLinkSchema.safeParse(await readJson(request));
-  if (!parsed.success) return apiError("INVALID_URL", firstIssue(parsed.error), 400);
-  const { longUrl } = parsed.data;
+  if (!parsed.success) {
+    return apiError(createErrorCode(parsed.error), firstIssue(parsed.error), 400);
+  }
+  // `alias` is already lower-cased by aliasSchema, so /Geeta-Fest = /geeta-fest.
+  const { longUrl, alias, forceNew } = parsed.data;
 
   // null = guest. Guest links are saved with userId: null.
   const user = await getCurrentUser();
@@ -57,7 +81,41 @@ export async function POST(request) {
   // getCurrentUser() only connects when there is a cookie, so connect for guests too.
   await connectDB();
 
-  // We don't check "is this code free?" before saving: two requests could both
+  // FR-04b: a logged-in user shortening a URL they already shortened gets
+  // their existing link back, so the app can ask "use existing or create new?".
+  // Only their own, non-deleted links count. Guests are never checked.
+  // forceNew: true means the user picked "create new", so we skip this.
+  if (user && forceNew !== true) {
+    const existing = await LinkModel.findOne({ userId: user._id, longUrl, isDeleted: false })
+      .sort({ createdAt: -1 }); // if there are several, show the newest
+    if (existing) {
+      return Response.json({ duplicate: true, existing: publicLink(existing) }, { status: 200 });
+    }
+  }
+
+  // Custom alias: one try only. We don't ask "is this alias free?" first,
+  // because two people could both get "yes" at the same moment. We just
+  // insert, and the unique index on `code` lets exactly one of them win;
+  // the other gets error 11000, which we turn into 409.
+  if (alias) {
+    try {
+      const link = await LinkModel.create({
+        code: alias,
+        isCustomAlias: true,
+        longUrl,
+        userId: user?._id ?? null,
+        createdVia: user ? "dashboard" : "guest",
+      });
+      return Response.json({ link: publicLink(link) }, { status: 201 });
+    } catch (error) {
+      if (error?.code === 11000 && error.keyPattern?.code) {
+        return apiError("ALIAS_TAKEN", "This alias is already taken. Please try another one.", 409);
+      }
+      throw error;
+    }
+  }
+
+  // No alias: make a random code. We don't check "is this code free?" before saving: two requests could both
   // see it as free and then both save it. Instead we just insert, and the
   // unique index on `code` makes MongoDB reject a clash with error 11000.
   // Then we make a new code and try again.

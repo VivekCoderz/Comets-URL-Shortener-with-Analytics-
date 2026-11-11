@@ -1,11 +1,11 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { after, connection, NextResponse } from "next/server";
+import { pushClickEvent } from "@/lib/clicks";
 import { connectDB } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import {
   cacheMissingLink,
   cacheRedirectLink,
-  enqueueClick,
   getCachedLink,
   incrementLinkHits,
   MISSING_LINK,
@@ -39,8 +39,12 @@ function clickEvent(request, link, clickedAt) {
     eventId: randomUUID(),
     linkId: link.id,
     userId: link.userId,
+    // The flush (lib/clicks.js, CMT-22) reads the redirect time from `time`.
+    time: clickedAt.toISOString(),
     clickedAt: clickedAt.toISOString(),
     visitorHash,
+    // Raw user-agent, so the enrichment step (CMT-24) can find device, browser and bots.
+    userAgent,
     country: request.headers.get("x-vercel-ip-country") || "Unknown",
     referrer: referrer && URL.canParse(referrer) ? new URL(referrer).hostname : "",
     source: "link",
@@ -104,7 +108,7 @@ export async function GET(request, { params }) {
   }
 
   const clickedAt = new Date();
-  after(() => enqueueClick(clickEvent(request, link, clickedAt)));
+  after(() => pushClickEvent(clickEvent(request, link, clickedAt)));
 
   return NextResponse.redirect(link.url, 302);
 }
