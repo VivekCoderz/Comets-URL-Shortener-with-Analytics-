@@ -167,6 +167,12 @@ describe("POST /api/links with alias and forceNew", () => {
     expect(body.error.code).toBe("INVALID_ALIAS");
   });
 
+  it.each([123, null])("gives 400 INVALID_ALIAS when alias is not text (%s)", async (alias) => {
+    const { res, body } = await create({ longUrl: url("non-text"), alias });
+    expect(res.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_ALIAS");
+  });
+
   it("still gives 400 INVALID_URL for a bad long URL", async () => {
     const { res, body } = await create({ longUrl: "not a url", alias: `ok-${tag}` });
     expect(res.status).toBe(400);
