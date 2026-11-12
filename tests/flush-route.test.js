@@ -8,6 +8,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const flushClicks = vi.fn(async () => ({ moved: 2, saved: 2, duplicates: 0 }));
 vi.mock("@/lib/clicks", () => ({ flushClicks }));
 
+// enrichClick is tested in tests/enrich.test.js (CMT-24); here we only check
+// that the route passes the redirect's raw event to it correctly.
+const enrichClick = vi.fn(async () => ({ visitorHash: "h", isBot: false, isRefresh: false }));
+vi.mock("@/lib/enrich", () => ({ enrichClick }));
+
 const SECRET = "test-cron-secret-1234567890";
 
 async function call(authorization) {
@@ -52,15 +57,24 @@ describe("POST /api/cron/flush-clicks", () => {
     expect(typeof enrich).toBe("function");
   });
 
-  it("the temporary enrich keeps the fields the Click model needs", async () => {
+  it("passes each raw click event to enrichClick (CMT-24)", async () => {
     await call(`Bearer ${SECRET}`);
     const { enrich } = flushClicks.mock.calls[0][0];
 
-    expect(await enrich({ visitorHash: "abc", referrer: "instagram.com", isBot: false, isRefresh: true })).toEqual({
-      visitorHash: "abc",
-      referrer: "instagram.com",
-      isBot: false,
-      isRefresh: true,
+    await enrich({
+      linkId: "L1",
+      ip: "1.2.3.4",
+      ua: "Mozilla/5.0",
+      referrer: "https://instagram.com/x",
+      time: "2026-11-12T05:00:00.000Z",
+    });
+
+    expect(enrichClick).toHaveBeenCalledWith({
+      linkId: "L1",
+      ip: "1.2.3.4",
+      userAgent: "Mozilla/5.0",
+      referrer: "https://instagram.com/x",
+      date: new Date("2026-11-12T05:00:00.000Z"),
     });
   });
 
