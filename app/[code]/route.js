@@ -59,7 +59,19 @@ function linkNotFound(request) {
   return NextResponse.redirect(new URL("/link-not-found", request.url), 302);
 }
 
-function expiredRedirect(request) {
+function expiredResponse(request) {
+  const acceptsJson = request.headers
+    .get("accept")
+    ?.split(",")
+    .some((mediaType) => mediaType.split(";")[0].trim().toLowerCase() === "application/json");
+
+  if (acceptsJson) {
+    return NextResponse.json(
+      { error: { code: "LINK_EXPIRED", message: "This link has expired." } },
+      { status: 410 },
+    );
+  }
+
   return NextResponse.redirect(new URL("/expired", request.url), 302);
 }
 
@@ -101,12 +113,12 @@ export async function GET(request, { params }) {
   }
 
   if (!link.active || (link.expiresAt && Date.parse(link.expiresAt) <= Date.now())) {
-    return expiredRedirect(request);
+    return expiredResponse(request);
   }
 
   if (link.maxClicks !== null && link.maxClicks !== undefined) {
     const hits = await incrementLinkHits(code);
-    if (hits > link.maxClicks) return expiredRedirect(request);
+    if (hits > link.maxClicks) return expiredResponse(request);
   }
 
   if (link.hasPassword) {
