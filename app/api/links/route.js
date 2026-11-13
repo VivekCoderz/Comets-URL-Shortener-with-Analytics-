@@ -4,6 +4,7 @@ import { generateCode } from "@/lib/codeGen";
 import { connectDB } from "@/lib/db";
 import { apiError, readJson } from "@/lib/errors";
 import { publicLink } from "@/lib/links";
+import { getHitsForLinks, getStatus } from "@/lib/linkStatus";
 import {
   aliasSchema,
   expiresAtSchema,
@@ -41,7 +42,16 @@ export async function GET(request) {
     LinkModel.countDocuments(filter),
   ]);
 
-  return Response.json({ links: links.map(publicLink), page, limit, total });
+  // Each link gets a `status` for the table badge (CMT-31): active, disabled,
+  // expired_date or expired_clicks. The click counters are read in one call.
+  const hits = await getHitsForLinks(links);
+  const now = new Date();
+  const result = links.map((link) => ({
+    ...publicLink(link),
+    status: getStatus(link, hits.get(link.code) ?? 0, now),
+  }));
+
+  return Response.json({ links: result, page, limit, total });
 }
 
 // CMT-12 added longUrl; CMT-15 adds alias (FR-04) and forceNew (FR-04b);
