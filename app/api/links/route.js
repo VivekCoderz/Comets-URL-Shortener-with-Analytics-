@@ -6,9 +6,11 @@ import { apiError, readJson } from "@/lib/errors";
 import { publicLink } from "@/lib/links";
 import {
   aliasSchema,
+  expiresAtSchema,
   firstIssue,
   listLinksQuerySchema,
   longUrlSchema,
+  maxClicksSchema,
 } from "@/lib/validators";
 import { LinkModel } from "@/models/Link";
 
@@ -42,12 +44,15 @@ export async function GET(request) {
   return Response.json({ links: links.map(publicLink), page, limit, total });
 }
 
-// CMT-12 added longUrl; CMT-15 adds alias (FR-04) and forceNew (FR-04b).
-// Title, expiry, password and QR style are added on their own days.
+// CMT-12 added longUrl; CMT-15 adds alias (FR-04) and forceNew (FR-04b);
+// CMT-32 adds expiresAt and maxClicks (FR-08).
+// Title, password and QR style are added on their own days.
 const createLinkSchema = z.object({
   longUrl: longUrlSchema,
   alias: aliasSchema.optional(),
   forceNew: z.boolean({ error: "forceNew must be true or false" }).optional(),
+  expiresAt: expiresAtSchema.optional(),
+  maxClicks: maxClicksSchema.optional(),
 });
 
 // Picks the error code for a failed body: the alias rules set their own code
@@ -62,10 +67,11 @@ function createErrorCode(error) {
 // How many new codes we try before giving up (PRD business rule 7.1).
 const MAX_TRIES = 5;
 
-// POST /api/links  { longUrl, alias?, forceNew? }
+// POST /api/links  { longUrl, alias?, forceNew?, expiresAt?, maxClicks? }
 //   → 201 { link }                       new link (link.shortUrl is the short link)
 //   → 200 { duplicate: true, existing }  logged-in user already shortened this URL
 //   → 409 ALIAS_TAKEN                    someone already has this alias
+//   → 401 UNAUTHORIZED                   a guest sent expiresAt or maxClicks
 // Works for guests (no cookie) and for logged-in users (board tasks CMT-12, CMT-15).
 export async function POST(request) {
   const parsed = createLinkSchema.safeParse(await readJson(request));
@@ -73,10 +79,25 @@ export async function POST(request) {
     return apiError(createErrorCode(parsed.error), firstIssue(parsed.error), 400);
   }
   // `alias` is already lower-cased by aliasSchema, so /Geeta-Fest = /geeta-fest.
-  const { longUrl, alias, forceNew } = parsed.data;
+  const { longUrl, alias, forceNew, expiresAt, maxClicks } = parsed.data;
 
   // null = guest. Guest links are saved with userId: null.
   const user = await getCurrentUser();
+
+  // Expiry and click limits are for logged-in users only (team decision, CMT-32).
+  if (!user && (expiresAt !== undefined || maxClicks !== undefined)) {
+    return apiError("UNAUTHORIZED", "Log in to set an expiry date or click limit", 401);
+  }
+
+  // Fields every new link gets, with or without an alias.
+  // expiresAt / maxClicks stay null (= no limit) when they were not sent.
+  const fields = {
+    longUrl,
+    userId: user?._id ?? null,
+    createdVia: user ? "dashboard" : "guest",
+    expiresAt: expiresAt ?? null,
+    maxClicks: maxClicks ?? null,
+  };
 
   // getCurrentUser() only connects when there is a cookie, so connect for guests too.
   await connectDB();
@@ -99,13 +120,7 @@ export async function POST(request) {
   // the other gets error 11000, which we turn into 409.
   if (alias) {
     try {
-      const link = await LinkModel.create({
-        code: alias,
-        isCustomAlias: true,
-        longUrl,
-        userId: user?._id ?? null,
-        createdVia: user ? "dashboard" : "guest",
-      });
+      const link = await LinkModel.create({ ...fields, code: alias, isCustomAlias: true });
       return Response.json({ link: publicLink(link) }, { status: 201 });
     } catch (error) {
       if (error?.code === 11000 && error.keyPattern?.code) {
@@ -122,12 +137,7 @@ export async function POST(request) {
   let link = null;
   for (let attempt = 1; attempt <= MAX_TRIES && !link; attempt++) {
     try {
-      link = await LinkModel.create({
-        code: generateCode(),
-        longUrl,
-        userId: user?._id ?? null,
-        createdVia: user ? "dashboard" : "guest",
-      });
+      link = await LinkModel.create({ ...fields, code: generateCode() });
     } catch (error) {
       // Only a clash on `code` is worth retrying; anything else is a real error.
       const codeClash = error?.code === 11000 && error.keyPattern?.code;
