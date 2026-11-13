@@ -129,3 +129,46 @@ describe("redirect with Redis down (T5)", () => {
     expect(response.headers.get("location")).toBe(`https://example.com/redirect/${code}`);
   });
 });
+
+// CMT-30 (PRD FR-08, T8): the click limit under parallel clicks.
+describe("click limit (maxClicks)", () => {
+  const VISITOR = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0";
+  const BOT = "WhatsApp/2.23.20.0";
+
+  function openAs(code, userAgent) {
+    return GET(new Request(`http://localhost:3000/${code}`, { headers: { "user-agent": userAgent } }), {
+      params: Promise.resolve({ code }),
+    });
+  }
+  const isExpired = (response) => new URL(response.headers.get("location")).pathname === "/expired";
+
+  it("lets exactly 10 of 20 parallel visitors through; bots don't use up the limit", async () => {
+    const code = await makeLink({ maxClicks: 10 });
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    await open(code); // fill the cache first, so all requests below race on the counter only
+    await getRedis().del(`link:hits:${code}`); // that first visit doesn't count for this test
+
+    const requests = [
+      ...Array.from({ length: 20 }, () => openAs(code, VISITOR).then((r) => ({ who: "visitor", r }))),
+      ...Array.from({ length: 5 }, () => openAs(code, BOT).then((r) => ({ who: "bot", r }))),
+    ];
+    const results = await Promise.all(requests);
+    const visitors = results.filter((x) => x.who === "visitor").map((x) => x.r);
+
+    expect(visitors.filter((r) => !isExpired(r))).toHaveLength(10);
+    expect(visitors.filter(isExpired)).toHaveLength(10);
+    expect(Number(await getRedis().get(`link:hits:${code}`))).toBe(20); // 20 visitors, 0 bots
+  });
+
+  it("redirects a bot without counting it, and blocks it once the limit is reached", async () => {
+    const code = await makeLink({ maxClicks: 1 });
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const bot = await openAs(code, BOT);
+    expect(bot.headers.get("location")).toBe(`https://example.com/redirect/${code}`);
+    expect(await getRedis().get(`link:hits:${code}`)).toBeNull(); // not counted
+
+    expect(isExpired(await openAs(code, VISITOR))).toBe(false); // the 1 allowed click
+    expect(isExpired(await openAs(code, BOT))).toBe(true); // limit reached
+  });
+});

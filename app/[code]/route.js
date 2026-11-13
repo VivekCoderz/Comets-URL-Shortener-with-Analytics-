@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { after, connection, NextResponse } from "next/server";
 import { pushClickEvent } from "@/lib/clicks";
 import { connectDB } from "@/lib/db";
+import { isBotUserAgent } from "@/lib/enrich";
 import {
   cacheMissingLink,
   cacheRedirectLink,
   getCachedLink,
+  getLinkHits,
   incrementLinkHits,
   MISSING_LINK,
 } from "@/lib/linkCache";
@@ -95,9 +97,21 @@ async function redirect(request, params, result) {
     return expiredRedirect(request);
   }
 
+  // Click limit (PRD FR-08, CMT-30). INCR is atomic: if 20 people click at the
+  // same moment, Redis still hands out 1, 2, … 20 one by one, so exactly
+  // maxClicks of them get through, never more.
+  // Bots (link previews, crawlers) must not use up the limit, so they only
+  // READ the count. They are still blocked once the limit is reached:
+  // anyone can fake a bot user-agent, so it must not be a way around the limit.
+  // hits is null when Redis is down: then we can't count, so nobody is blocked.
   if (link.maxClicks !== null && link.maxClicks !== undefined) {
-    const hits = await incrementLinkHits(code); // null if Redis is down: not blocked
-    if (hits !== null && hits > link.maxClicks) return expiredRedirect(request);
+    if (isBotUserAgent(request.headers.get("user-agent"))) {
+      const hits = await getLinkHits(code);
+      if (hits !== null && hits >= link.maxClicks) return expiredRedirect(request);
+    } else {
+      const hits = await incrementLinkHits(code);
+      if (hits !== null && hits > link.maxClicks) return expiredRedirect(request);
+    }
   }
 
   if (link.hasPassword) {

@@ -9,6 +9,7 @@
     "lint": "eslint",
     "try:link": "node --env-file=.env.local scripts/try-link.js",
     "try:shorten": "node --env-file=.env.local scripts/try-shorten.js",
+    "try:maxclicks": "node --env-file=.env.local scripts/maxClicksTest.js",
     "test": "vitest run"
   },
   "dependencies": {
