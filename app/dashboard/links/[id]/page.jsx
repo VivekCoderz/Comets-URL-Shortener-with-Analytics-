@@ -5,21 +5,19 @@ import CopyButton from "@/components/CopyButton";
 import LinkAnalytics from "@/components/LinkAnalytics";
 import { getCurrentUser } from "@/lib/auth";
 import { shortUrlFor } from "@/lib/links";
+import { getHitsForLinks, getStatus, LINK_STATUS } from "@/lib/linkStatus";
 import { LinkModel } from "@/models/Link";
 
 // /dashboard/links/[id]: one link's details and analytics (Screen 08, FR-07).
 // proxy.js already sends logged-out users to /login before this page loads.
 
-// Same rules as the redirect (app/[code]/route.js): turned off by the owner,
-// or past its expiry date. (The max-clicks limit is counted in Redis, so it
-// can't be checked here.)
-function linkStatus(link) {
-  if (!link.isActive) return { label: "Disabled", className: "bg-zinc-100 text-zinc-600" };
-  if (link.expiresAt && link.expiresAt <= new Date()) {
-    return { label: "Expired", className: "bg-amber-100 text-amber-700" };
-  }
-  return { label: "Active", className: "bg-emerald-100 text-emerald-700" };
-}
+// Badge text (PRD FR-08) and colour for each status from getStatus() (CMT-31).
+const STATUS_BADGES = {
+  [LINK_STATUS.ACTIVE]: { label: "Active", className: "bg-emerald-100 text-emerald-700" },
+  [LINK_STATUS.EXPIRED_DATE]: { label: "Expired (date)", className: "bg-amber-100 text-amber-700" },
+  [LINK_STATUS.EXPIRED_CLICKS]: { label: "Expired (clicks)", className: "bg-amber-100 text-amber-700" },
+  [LINK_STATUS.DISABLED]: { label: "Disabled", className: "bg-zinc-100 text-zinc-600" },
+};
 
 async function LinkDetails({ params }) {
   // Reading the login cookie and params happens per request, which is why
@@ -35,7 +33,12 @@ async function LinkDetails({ params }) {
   if (!link) notFound();
 
   const shortUrl = shortUrlFor(link.code);
-  const status = linkStatus(link);
+
+  // Same status rules as the links list (lib/linkStatus.js). The click counter
+  // lives in Redis, so read it first; links without a click limit get no
+  // counter, and getStatus() then treats hits as 0.
+  const hits = await getHitsForLinks([link]);
+  const status = STATUS_BADGES[getStatus(link, hits.get(link.code) ?? 0)];
 
   return (
     <div className="flex flex-col gap-5">
