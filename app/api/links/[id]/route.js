@@ -21,7 +21,10 @@ async function findOwnLink(id, user) {
   return LinkModel.findOne({ _id: id, userId: user._id, isDeleted: false });
 }
 
-// PATCH /api/links/[id]  { longUrl?, title?, isActive? }  →  200 { link }
+// PATCH /api/links/[id]  { longUrl?, title?, isActive?, expiresAt?, maxClicks? }  →  200 { link }
+// expiresAt / maxClicks: null removes the limit (CMT-32). Moving the expiry date
+// into the future, or raising the click limit, makes an expired link work again.
+// The click counter in Redis (link:hits:{code}) is NOT reset when maxClicks changes.
 export async function PATCH(request, { params }) {
   const user = await getCurrentUser(); // also connects to MongoDB
   if (!user) return apiError("UNAUTHORIZED", "Please log in", 401);
@@ -40,8 +43,9 @@ export async function PATCH(request, { params }) {
   }
   await link.save();
 
-  // Remove the old cached copy so the redirect uses the new destination (or
-  // the new active/disabled state) on the very next click (PRD FR-05, T6).
+  // Remove the old cached copy so the redirect uses the new destination, the
+  // new active/disabled state, or the new expiry date / click limit (CMT-32) on
+  // the very next click (PRD FR-05, T6).
   await deleteLinkCache(link.code);
   return Response.json({ link: publicLink(link) });
 }

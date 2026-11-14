@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { flushClicks } from "@/lib/clicks";
+import { enrichClick } from "@/lib/enrich";
 import { getEnv } from "@/lib/env";
 import { apiError } from "@/lib/errors";
 
@@ -13,18 +14,18 @@ import { apiError } from "@/lib/errors";
 // The scheduler must send:  Authorization: Bearer <CRON_SECRET>
 // Without the right secret anyone could trigger flushes, so we answer 401.
 
-// Temporary enrich step until Imran's lib/enrich.js (CMT-24) is merged.
-// The redirect already puts visitorHash, referrer, isBot and isRefresh in the
-// event, so for now we just copy them. CMT-24 replaces this with real
-// device / browser / OS / bot / refresh detection.
-// TODO CMT-24: import { enrich } from "@/lib/enrich" and delete this function.
-function basicEnrich(event) {
-  return {
-    visitorHash: event.visitorHash,
-    referrer: event.referrer ?? "",
-    isBot: Boolean(event.isBot),
-    isRefresh: Boolean(event.isRefresh),
-  };
+// Turns one raw event from the redirect (CMT-25: ip, ua, referrer, time) into
+// the Click fields: device, browser, os, referrer domain, isBot, visitorHash
+// and isRefresh, using Imran's enrichClick() (lib/enrich.js, CMT-24).
+// flushClicks() calls this once per event, oldest first.
+function enrich(event) {
+  return enrichClick({
+    linkId: event.linkId,
+    ip: event.ip,
+    userAgent: event.ua,
+    referrer: event.referrer,
+    date: new Date(event.time),
+  });
 }
 
 // Compares two strings in constant time, so an attacker can't guess the
@@ -47,7 +48,7 @@ export async function POST(request) {
     return apiError("UNAUTHORIZED", "Missing or wrong cron secret", 401);
   }
 
-  const result = await flushClicks({ enrich: basicEnrich });
+  const result = await flushClicks({ enrich });
 
   // One log line per run, so failures and batch sizes show up in Vercel logs (PRD section 6).
   console.info(`[flush-clicks] ${JSON.stringify(result)}`);

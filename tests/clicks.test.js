@@ -5,6 +5,7 @@ import { connectDB } from "@/lib/db";
 import { flushClicks, pushClickEvent } from "@/lib/clicks";
 import { getRedis } from "@/lib/redis";
 import { ClickModel } from "@/models/Click";
+import { DailyStatModel } from "@/models/DailyStat";
 import { LinkModel } from "@/models/Link";
 
 // Tests for the click queue and flush (board task CMT-22, PRD section 4.2).
@@ -29,6 +30,7 @@ const redis = getRedis();
 const eventIds = [];
 const linkIds = [];
 let prefix;
+const prefixes = []; // to delete the unique-visitor sets the flush makes
 let k;
 
 function newEvent(linkId = new mongoose.Types.ObjectId(), extra = {}) {
@@ -53,13 +55,21 @@ const savedClicks = (events) =>
 beforeEach(() => {
   // A fresh prefix per test, so tests can't see each other's events.
   prefix = `test:${randomUUID()}:`;
+  prefixes.push(prefix);
   k = { queue: `${prefix}clicks:queue`, processing: `${prefix}clicks:processing`, lock: `${prefix}lock:flush` };
 });
 
 afterAll(async () => {
   await connectDB();
+  // The flush also fills dailystats (CMT-26) for every link these clicks used.
+  const clickLinkIds = await ClickModel.distinct("linkId", { eventId: { $in: eventIds } });
+  await DailyStatModel.deleteMany({ linkId: { $in: [...clickLinkIds, ...linkIds] } });
   await ClickModel.deleteMany({ eventId: { $in: eventIds } });
   await LinkModel.deleteMany({ _id: { $in: linkIds } });
+  for (const p of prefixes) {
+    const keys = await redis.keys(`${p}*`);
+    if (keys.length > 0) await redis.del(...keys);
+  }
   await mongoose.disconnect();
 });
 

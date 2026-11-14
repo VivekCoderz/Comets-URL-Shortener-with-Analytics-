@@ -1,12 +1,13 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { after, connection, NextResponse } from "next/server";
 import { pushClickEvent } from "@/lib/clicks";
 import { connectDB } from "@/lib/db";
-import { getEnv } from "@/lib/env";
+import { isBotUserAgent } from "@/lib/enrich";
 import {
   cacheMissingLink,
   cacheRedirectLink,
   getCachedLink,
+  getLinkHits,
   incrementLinkHits,
   MISSING_LINK,
 } from "@/lib/linkCache";
@@ -15,41 +16,18 @@ import { z } from "zod";
 
 const codeSchema = z.string().min(1);
 
-function istDate(date) {
-  const parts = new Intl.DateTimeFormat("en", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
 function clickEvent(request, link, clickedAt) {
-  const forwardedIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const ip = forwardedIp || request.headers.get("x-real-ip") || "";
-  const userAgent = request.headers.get("user-agent") || "";
-  const visitorHash = createHmac("sha256", getEnv().JWT_SECRET)
-    .update(`${ip}${userAgent}${istDate(clickedAt)}`)
-    .digest("hex");
-  const referrer = request.headers.get("referer");
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "";
 
   return {
     eventId: randomUUID(),
     linkId: link.id,
-    userId: link.userId,
-    // The flush (lib/clicks.js, CMT-22) reads the redirect time from `time`.
     time: clickedAt.toISOString(),
-    clickedAt: clickedAt.toISOString(),
-    visitorHash,
-    // Raw user-agent, so the enrichment step (CMT-24) can find device, browser and bots.
-    userAgent,
+    ip,
+    ua: request.headers.get("user-agent") || "",
+    referrer: request.headers.get("referer") || "",
     country: request.headers.get("x-vercel-ip-country") || "Unknown",
-    referrer: referrer && URL.canParse(referrer) ? new URL(referrer).hostname : "",
-    source: "link",
-    isBot: false,
-    isRefresh: false,
+    source: new URL(request.url).searchParams.get("src") === "qr" ? "qr" : "link",
   };
 }
 
@@ -75,7 +53,21 @@ function expiredResponse(request) {
   return NextResponse.redirect(new URL("/expired", request.url), 302);
 }
 
+// One log line per redirect (CMT-18), e.g.
+//   [redirect] path=/geeta-fest status=302 ms=14 cache=hit
+// so slow redirects and the cache hit rate show up in the Vercel logs.
 export async function GET(request, { params }) {
+  const start = performance.now();
+  const result = { cache: "miss" }; // redirect() sets "hit" when Redis had the link
+  const response = await redirect(request, params, result);
+
+  const ms = Math.round(performance.now() - start);
+  const path = new URL(request.url).pathname;
+  console.info(`[redirect] path=${path} status=${response.status} ms=${ms} cache=${result.cache}`);
+  return response;
+}
+
+async function redirect(request, params, result) {
   await connection();
 
   const { code: rawCode } = await params;
@@ -83,13 +75,14 @@ export async function GET(request, { params }) {
   if (!parsedCode.success) return linkNotFound(request);
 
   const code = parsedCode.data.toLowerCase();
+  // null when the link isn't cached OR Redis is down (lib/linkCache.js logs a
+  // warning then); both cases read the link from MongoDB below.
   let link = await getCachedLink(code);
 
   if (link !== null && link !== undefined) {
-    console.info(`[redirect] cache=hit code=${code}`);
+    result.cache = "hit";
     if (link === MISSING_LINK) return linkNotFound(request);
   } else {
-    console.info(`[redirect] cache=miss code=${code}`);
     await connectDB();
     const document = await LinkModel.findOne({ code, isDeleted: false }).select(
       "+passwordHash",
@@ -116,9 +109,21 @@ export async function GET(request, { params }) {
     return expiredResponse(request);
   }
 
+  // Click limit (PRD FR-08, CMT-30). INCR is atomic: if 20 people click at the
+  // same moment, Redis still hands out 1, 2, … 20 one by one, so exactly
+  // maxClicks of them get through, never more.
+  // Bots (link previews, crawlers) must not use up the limit, so they only
+  // READ the count. They are still blocked once the limit is reached:
+  // anyone can fake a bot user-agent, so it must not be a way around the limit.
+  // hits is null when Redis is down: then we can't count, so nobody is blocked.
   if (link.maxClicks !== null && link.maxClicks !== undefined) {
-    const hits = await incrementLinkHits(code);
-    if (hits > link.maxClicks) return expiredResponse(request);
+    if (isBotUserAgent(request.headers.get("user-agent"))) {
+      const hits = await getLinkHits(code);
+      if (hits !== null && hits >= link.maxClicks) return expiredResponse(request);
+    } else {
+      const hits = await incrementLinkHits(code);
+      if (hits !== null && hits > link.maxClicks) return expiredResponse(request);
+    }
   }
 
   if (link.hasPassword) {
@@ -126,7 +131,8 @@ export async function GET(request, { params }) {
   }
 
   const clickedAt = new Date();
-  after(() => pushClickEvent(clickEvent(request, link, clickedAt)));
+  const event = clickEvent(request, link, clickedAt);
+  after(() => pushClickEvent(event));
 
   return NextResponse.redirect(link.url, 302);
 }
