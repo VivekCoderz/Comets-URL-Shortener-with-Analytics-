@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { after, connection, NextResponse } from "next/server";
 import { pushClickEvent } from "@/lib/clicks";
 import { connectDB } from "@/lib/db";
+import { isBotUserAgent } from "@/lib/enrich";
 import {
   cacheMissingLink,
   cacheRedirectLink,
   getCachedLink,
+  getLinkHits,
   incrementLinkHits,
   MISSING_LINK,
 } from "@/lib/linkCache";
@@ -39,7 +41,21 @@ function expiredRedirect(request) {
   return NextResponse.redirect(new URL("/expired", request.url), 302);
 }
 
+// One log line per redirect (CMT-18), e.g.
+//   [redirect] path=/geeta-fest status=302 ms=14 cache=hit
+// so slow redirects and the cache hit rate show up in the Vercel logs.
 export async function GET(request, { params }) {
+  const start = performance.now();
+  const result = { cache: "miss" }; // redirect() sets "hit" when Redis had the link
+  const response = await redirect(request, params, result);
+
+  const ms = Math.round(performance.now() - start);
+  const path = new URL(request.url).pathname;
+  console.info(`[redirect] path=${path} status=${response.status} ms=${ms} cache=${result.cache}`);
+  return response;
+}
+
+async function redirect(request, params, result) {
   await connection();
 
   const { code: rawCode } = await params;
@@ -47,13 +63,14 @@ export async function GET(request, { params }) {
   if (!parsedCode.success) return linkNotFound(request);
 
   const code = parsedCode.data.toLowerCase();
+  // null when the link isn't cached OR Redis is down (lib/linkCache.js logs a
+  // warning then); both cases read the link from MongoDB below.
   let link = await getCachedLink(code);
 
   if (link !== null && link !== undefined) {
-    console.info(`[redirect] cache=hit code=${code}`);
+    result.cache = "hit";
     if (link === MISSING_LINK) return linkNotFound(request);
   } else {
-    console.info(`[redirect] cache=miss code=${code}`);
     await connectDB();
     const document = await LinkModel.findOne({ code, isDeleted: false }).select(
       "+passwordHash",
@@ -80,9 +97,21 @@ export async function GET(request, { params }) {
     return expiredRedirect(request);
   }
 
+  // Click limit (PRD FR-08, CMT-30). INCR is atomic: if 20 people click at the
+  // same moment, Redis still hands out 1, 2, … 20 one by one, so exactly
+  // maxClicks of them get through, never more.
+  // Bots (link previews, crawlers) must not use up the limit, so they only
+  // READ the count. They are still blocked once the limit is reached:
+  // anyone can fake a bot user-agent, so it must not be a way around the limit.
+  // hits is null when Redis is down: then we can't count, so nobody is blocked.
   if (link.maxClicks !== null && link.maxClicks !== undefined) {
-    const hits = await incrementLinkHits(code);
-    if (hits > link.maxClicks) return expiredRedirect(request);
+    if (isBotUserAgent(request.headers.get("user-agent"))) {
+      const hits = await getLinkHits(code);
+      if (hits !== null && hits >= link.maxClicks) return expiredRedirect(request);
+    } else {
+      const hits = await incrementLinkHits(code);
+      if (hits !== null && hits > link.maxClicks) return expiredRedirect(request);
+    }
   }
 
   if (link.hasPassword) {

@@ -87,6 +87,7 @@ If a part says `"ok": false`, its `error` field tells you what is wrong (usually
 | `npm run start` | Run the production build |
 | `npm run lint` | ESLint |
 | `npm test` | Run the Vitest tests in `tests/` (uses the database in `.env.local`) |
+| `npm run try:maxclicks` | Click-limit test against the running app (see below) |
 
 ## Folder structure
 
@@ -156,6 +157,41 @@ Pro plan and payment endpoints will be added once FR-15 is decided.
 | 410 | Link expired (date or clicks), for API clients |
 | 422 | URL flagged as unsafe |
 | 429 | Rate limit or daily link limit reached |
+
+## Click limit test (CMT-30, PRD FR-08, T8)
+
+A link with `maxClicks: 10` must let **exactly 10** people through, even when
+20 open it at the same moment. The redirect counts clicks with Redis `INCR`,
+which is atomic: parallel requests still get the numbers 1, 2, … 20 one by one,
+and only numbers 1–10 reach the real URL.
+
+Bots (WhatsApp previews, crawlers, `curl`) only **read** the count, so they never
+use up a click. They are still sent to `/expired` once the limit is reached,
+because anyone can fake a bot user-agent.
+
+Run it with the app running (`npm run dev`), in a second terminal:
+
+```
+npm run try:maxclicks
+```
+
+Result on 13 Nov 2026 (local dev server, real MongoDB and Redis):
+
+```
+Link /maxclicks-0e1cef16 with maxClicks = 10
+Sending 20 visitors + 5 bots at the same time to http://localhost:3000 ...
+
+Visitors sent to the real URL : 10   (expected 10)
+Visitors sent to /expired     : 10   (expected 10)
+Bots sent to the real URL     : 1    (depends on timing: bots only check the count)
+Bots sent to /expired         : 4
+Click counter in Redis        : 20   (expected 20: one per visitor, bots not counted)
+Bot after the limit           : expired   (expected expired)
+
+PASS: the limit held under parallel clicks.
+```
+
+The same check runs in `npm test` (`tests/redirect.test.js`).
 
 ## How we work
 
