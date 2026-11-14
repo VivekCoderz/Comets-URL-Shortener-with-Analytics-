@@ -37,7 +37,19 @@ function linkNotFound(request) {
   return NextResponse.redirect(new URL("/link-not-found", request.url), 302);
 }
 
-function expiredRedirect(request) {
+function expiredResponse(request) {
+  const acceptsJson = request.headers
+    .get("accept")
+    ?.split(",")
+    .some((mediaType) => mediaType.split(";")[0].trim().toLowerCase() === "application/json");
+
+  if (acceptsJson) {
+    return NextResponse.json(
+      { error: { code: "LINK_EXPIRED", message: "This link has expired." } },
+      { status: 410 },
+    );
+  }
+
   return NextResponse.redirect(new URL("/expired", request.url), 302);
 }
 
@@ -94,7 +106,7 @@ async function redirect(request, params, result) {
   }
 
   if (!link.active || (link.expiresAt && Date.parse(link.expiresAt) <= Date.now())) {
-    return expiredRedirect(request);
+    return expiredResponse(request);
   }
 
   // Click limit (PRD FR-08, CMT-30). INCR is atomic: if 20 people click at the
@@ -107,10 +119,10 @@ async function redirect(request, params, result) {
   if (link.maxClicks !== null && link.maxClicks !== undefined) {
     if (isBotUserAgent(request.headers.get("user-agent"))) {
       const hits = await getLinkHits(code);
-      if (hits !== null && hits >= link.maxClicks) return expiredRedirect(request);
+      if (hits !== null && hits >= link.maxClicks) return expiredResponse(request);
     } else {
       const hits = await incrementLinkHits(code);
-      if (hits !== null && hits > link.maxClicks) return expiredRedirect(request);
+      if (hits !== null && hits > link.maxClicks) return expiredResponse(request);
     }
   }
 

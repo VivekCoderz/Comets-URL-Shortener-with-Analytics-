@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, hashPassword } from "@/lib/auth";
 import { generateCode } from "@/lib/codeGen";
 import { connectDB } from "@/lib/db";
 import { apiError, readJson } from "@/lib/errors";
@@ -9,6 +9,7 @@ import {
   aliasSchema,
   expiresAtSchema,
   firstIssue,
+  linkPasswordSchema,
   listLinksQuerySchema,
   longUrlSchema,
   maxClicksSchema,
@@ -60,6 +61,7 @@ export async function GET(request) {
 const createLinkSchema = z.object({
   longUrl: longUrlSchema,
   alias: aliasSchema.optional(),
+  password: linkPasswordSchema,
   forceNew: z.boolean({ error: "forceNew must be true or false" }).optional(),
   expiresAt: expiresAtSchema.optional(),
   maxClicks: maxClicksSchema.optional(),
@@ -89,7 +91,7 @@ export async function POST(request) {
     return apiError(createErrorCode(parsed.error), firstIssue(parsed.error), 400);
   }
   // `alias` is already lower-cased by aliasSchema, so /Geeta-Fest = /geeta-fest.
-  const { longUrl, alias, forceNew, expiresAt, maxClicks } = parsed.data;
+  const { longUrl, alias, password, forceNew, expiresAt, maxClicks } = parsed.data;
 
   // null = guest. Guest links are saved with userId: null.
   const user = await getCurrentUser();
@@ -101,12 +103,14 @@ export async function POST(request) {
 
   // Fields every new link gets, with or without an alias.
   // expiresAt / maxClicks stay null (= no limit) when they were not sent.
+  const passwordHash = password ? await hashPassword(password) : undefined;
   const fields = {
     longUrl,
     userId: user?._id ?? null,
     createdVia: user ? "dashboard" : "guest",
     expiresAt: expiresAt ?? null,
     maxClicks: maxClicks ?? null,
+    ...(passwordHash ? { passwordHash } : {}),
   };
 
   // getCurrentUser() only connects when there is a cookie, so connect for guests too.
