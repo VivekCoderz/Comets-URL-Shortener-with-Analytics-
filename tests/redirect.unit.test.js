@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   cacheMissingLink: vi.fn(),
   cacheRedirectLink: vi.fn(),
   connectDB: vi.fn(),
+  pushClickEvent: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -17,6 +18,7 @@ vi.mock("next/server", async (importOriginal) => {
 });
 
 vi.mock("@/lib/db", () => ({ connectDB: mocks.connectDB }));
+vi.mock("@/lib/clicks", () => ({ pushClickEvent: mocks.pushClickEvent }));
 vi.mock("@/lib/linkCache", () => ({
   MISSING_LINK: "__none__",
   cacheMissingLink: mocks.cacheMissingLink,
@@ -149,6 +151,33 @@ describe("GET /[code]", () => {
 
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("https://example.com/destination");
+  });
+
+  it("records QR redirects separately from normal link clicks", async () => {
+    const qrResponse = await GET(
+      new Request("http://localhost:3000/short-code?src=qr"),
+      context(),
+    );
+    const [qrCallback] = mocks.after.mock.calls[0];
+    await qrCallback();
+
+    const linkResponse = await GET(
+      new Request("http://localhost:3000/short-code"),
+      context(),
+    );
+    const [linkCallback] = mocks.after.mock.calls[1];
+    await linkCallback();
+
+    expect(qrResponse.headers.get("location")).toBe("https://example.com/destination");
+    expect(linkResponse.headers.get("location")).toBe("https://example.com/destination");
+    expect(mocks.pushClickEvent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ source: "qr" }),
+    );
+    expect(mocks.pushClickEvent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ source: "link" }),
+    );
   });
 
   it("allows exactly maxClicks redirects across concurrent requests", async () => {
