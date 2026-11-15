@@ -36,7 +36,8 @@ const linkSchema = new Schema(
     // bcrypt hash for password-protected links. Hidden from queries by default.
     passwordHash: { type: String, select: false },
 
-    // Custom QR code colours and logo. How logos are stored is still TBD in the PRD.
+    // Custom QR code colours and logo (CMT-38). The logo image itself is in the
+    // QrLogo collection (team decision); logoUrl is the route that serves it.
     qrStyle: {
       fgColor: { type: String },
       bgColor: { type: String },

@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useState } from "react";
 import CopyButton from "@/components/CopyButton";
 import LinkForm from "@/components/LinkForm";
+import QrDesigner from "@/components/QrDesigner";
 
 // Home page "/" (PRD section 10): the guest shortener.
 //   Before Shorten → screen 01 (dark hero with the URL box).
 //   After Shorten  → screen 02 (your short link is ready + copy).
-// The QR designer and share buttons from screen 02 come on Day 10 (CMT-38).
+//   The QR designer (CMT-38) is on screen 02; share buttons (FR-10b) come separately.
 
 const features = [
   { icon: "🎨", title: "Custom QR", text: "Colours + your logo" },
@@ -151,6 +152,9 @@ function Result({ link, onReset }) {
             → {link.longUrl.replace(/^https?:\/\//, "")}
           </p>
         </section>
+
+        {/* QR designer (FR-10, CMT-38). Guests' QR is made in the browser and not saved. */}
+        <QrDesigner mode="guest" code={link.code} shortUrl={link.shortUrl} />
 
         <section className="flex flex-col items-start justify-between gap-4 rounded-2xl sm:flex-row sm:items-center bg-linear-to-r from-violet-500 to-cyan-500 p-6 text-white">
           <div>
