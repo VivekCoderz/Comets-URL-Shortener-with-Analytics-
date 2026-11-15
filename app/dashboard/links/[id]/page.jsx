@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import CopyButton from "@/components/CopyButton";
 import LinkAnalytics from "@/components/LinkAnalytics";
+import QrDesigner from "@/components/QrDesigner";
 import { getCurrentUser } from "@/lib/auth";
 import { shortUrlFor } from "@/lib/links";
 import { getHitsForLinks, getStatus, LINK_STATUS } from "@/lib/linkStatus";
@@ -56,6 +57,19 @@ async function LinkDetails({ params }) {
         </div>
         <CopyButton text={shortUrl} />
       </header>
+
+      {/* QR designer (FR-10, CMT-38). Plain values only: the lean document has ObjectIds. */}
+      <QrDesigner
+        mode="owner"
+        linkId={String(link._id)}
+        code={link.code}
+        shortUrl={shortUrl}
+        initialStyle={{
+          fgColor: link.qrStyle?.fgColor ?? null,
+          bgColor: link.qrStyle?.bgColor ?? null,
+          logoUrl: link.qrStyle?.logoUrl ?? null,
+        }}
+      />
 
       <LinkAnalytics linkId={String(link._id)} />
     </div>
