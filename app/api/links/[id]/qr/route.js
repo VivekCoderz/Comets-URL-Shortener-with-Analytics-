@@ -13,7 +13,7 @@ import {
   qrSizeSchema,
   qrUrlFor,
 } from "@/lib/qr";
-import { isRealLogoImage, renderQrPng } from "@/lib/qrImage";
+import { checkLogoImage, renderQrPng } from "@/lib/qrImage";
 import { firstIssue } from "@/lib/validators";
 import { LinkModel } from "@/models/Link";
 import { QrLogoModel } from "@/models/QrLogo";
@@ -115,13 +115,16 @@ export async function PUT(request, { params }) {
   const logoField = form.get("logo");
   const hasNewLogo = logoField instanceof File && logoField.size > 0;
   let logoBytes = null;
+  let logoType = null;
   if (hasNewLogo) {
+    // 1. What the browser says: size (1 MB) and type (PNG/JPG).
     const logo = logoFileSchema.safeParse(logoField);
     if (!logo.success) return apiError("VALIDATION_ERROR", firstIssue(logo.error), 400);
     logoBytes = Buffer.from(await logo.data.arrayBuffer());
-    if (!(await isRealLogoImage(logoBytes))) {
-      return apiError("VALIDATION_ERROR", "Logo must be a PNG or JPG image", 400);
-    }
+    // 2. What the file really is: real PNG/JPG, at most 2,000 × 2,000 px (CMT-39).
+    const check = await checkLogoImage(logoBytes);
+    if (!check.ok) return apiError("VALIDATION_ERROR", check.message, 400);
+    logoType = check.contentType; // the real type, not the one the browser sent
   }
 
   const { id } = await params;
@@ -133,7 +136,7 @@ export async function PUT(request, { params }) {
     // One logo per link: replace the old one if there is one.
     await QrLogoModel.findOneAndUpdate(
       { linkId: link._id },
-      { contentType: logoField.type, data: logoBytes },
+      { contentType: logoType, data: logoBytes },
       { upsert: true },
     );
     logoUrl = logoUrlFor(link._id);
