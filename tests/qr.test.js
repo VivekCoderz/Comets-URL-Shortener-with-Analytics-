@@ -195,3 +195,68 @@ describe("PUT /api/links/[id]/qr", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// Board task CMT-39: the logo upload can't be used to attack the server, and
+// only the owner can see a saved logo.
+describe("QR logo security (CMT-39)", () => {
+  const colours = { fgColor: "#000000", bgColor: "#ffffff" };
+
+  async function image(format, width, height) {
+    const bytes = await sharp({ create: { width, height, channels: 3, background: "#00aa00" } })
+      .toFormat(format)
+      .toBuffer();
+    return bytes;
+  }
+
+  it("rejects a small file that is a huge image (decompression bomb)", async () => {
+    await loginAs(owner);
+    const bytes = await image("png", 3000, 3000); // one colour: only a few KB on disk
+    expect(bytes.length).toBeLessThan(qr.LOGO_MAX_BYTES);
+    const logo = new File([bytes], "bomb.png", { type: "image/png" });
+    const { res, body } = await putQr(link._id, { ...colours, logo });
+    expect(res.status).toBe(400);
+    expect(body.error.message).toContain(`${qr.LOGO_MAX_SIDE}`);
+  });
+
+  it("accepts a logo exactly at the size limit", async () => {
+    await loginAs(owner);
+    const bytes = await image("png", qr.LOGO_MAX_SIDE, qr.LOGO_MAX_SIDE);
+    const { res } = await putQr(link._id, { ...colours, logo: new File([bytes], "ok.png", { type: "image/png" }) });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects a real GIF that is labelled as a PNG", async () => {
+    await loginAs(owner);
+    const bytes = await image("gif", 32, 32);
+    const { res } = await putQr(link._id, { ...colours, logo: new File([bytes], "logo.png", { type: "image/png" }) });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a file sent as text/html", async () => {
+    await loginAs(owner);
+    const html = new File(["<script>alert(1)</script>"], "logo.html", { type: "text/html" });
+    const { res } = await putQr(link._id, { ...colours, logo: html });
+    expect(res.status).toBe(400);
+  });
+
+  it("stores the REAL type: a JPG labelled as PNG is served as image/jpeg", async () => {
+    await loginAs(owner);
+    const bytes = await image("jpeg", 32, 32);
+    const { res } = await putQr(link._id, { ...colours, logo: new File([bytes], "logo.png", { type: "image/png" }) });
+    expect(res.status).toBe(200);
+    const logoRes = await GET_LOGO(new Request("http://localhost:3000/"), ctx(link._id));
+    expect(logoRes.headers.get("content-type")).toBe("image/jpeg");
+  });
+
+  it("hides the saved logo from other users (404)", async () => {
+    await loginAs(stranger);
+    const res = await GET_LOGO(new Request("http://localhost:3000/"), ctx(link._id));
+    expect(res.status).toBe(404);
+  });
+
+  it("is 401 for a guest asking for a logo", async () => {
+    cookieJar.clear();
+    const res = await GET_LOGO(new Request("http://localhost:3000/"), ctx(link._id));
+    expect(res.status).toBe(401);
+  });
+});
