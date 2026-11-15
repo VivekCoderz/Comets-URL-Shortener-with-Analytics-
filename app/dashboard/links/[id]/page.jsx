@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import CopyButton from "@/components/CopyButton";
 import LinkAnalytics from "@/components/LinkAnalytics";
 import QrDesigner from "@/components/QrDesigner";
+import ShareButtons from "@/components/ShareButtons";
 import { getCurrentUser } from "@/lib/auth";
 import { shortUrlFor } from "@/lib/links";
 import { getHitsForLinks, getStatus, LINK_STATUS } from "@/lib/linkStatus";
@@ -55,7 +56,10 @@ async function LinkDetails({ params }) {
             </span>
           </p>
         </div>
-        <CopyButton text={shortUrl} />
+        <div className="flex flex-wrap items-center gap-2">
+          <CopyButton text={shortUrl} />
+          <ShareButtons shortUrl={shortUrl} />
+        </div>
       </header>
 
       {/* QR designer (FR-10, CMT-38). Plain values only: the lean document has ObjectIds. */}
