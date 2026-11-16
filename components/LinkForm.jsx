@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DuplicatePrompt from "@/components/DuplicatePrompt";
 import { getEnv } from "@/lib/env";
-import { firstIssue, longUrlSchema } from "@/lib/validators";
+import { firstIssue, linkPasswordSchema, longUrlSchema } from "@/lib/validators";
 
 // "comets.vercel.app/" shown in front of the alias box (screen 01).
 const shortHost = `${new URL(getEnv({ publicOnly: true }).NEXT_PUBLIC_BASE_URL).host}/`;
@@ -11,6 +11,20 @@ const shortHost = `${new URL(getEnv({ publicOnly: true }).NEXT_PUBLIC_BASE_URL).
 // Error codes from POST /api/links that are about the alias (PRD sections 9 and 9.1).
 // These show under the alias box; every other error shows under the URL box.
 const ALIAS_ERRORS = ["ALIAS_TAKEN", "INVALID_ALIAS", "RESERVED_ALIAS"];
+
+// Today's link quota { limit, used, remaining } from GET /api/auth/me (CMT-44),
+// or null if it can't be read. Then the chip is simply not shown; the server
+// still enforces the limit.
+async function fetchQuota() {
+  try {
+    const res = await fetch("/api/auth/me");
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body.quota ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // The "paste a long URL → Shorten" form, used on two pages:
 //   variant="hero" → home page, dark background (screens 01 and 03)
@@ -21,6 +35,11 @@ const ALIAS_ERRORS = ["ALIAS_TAKEN", "INVALID_ALIAS", "RESERVED_ALIAS"];
 // After Shorten it calls onCreated(link, { existing }):
 //   existing: false → a new link was made
 //   existing: true  → the user chose "Use existing link" in the duplicate prompt
+//
+// Card variant only (logged-in users, CMT-44):
+//   • "37 of 50 left today", read from GET /api/auth/me and read again after
+//     each create. At 0 the Shorten button is disabled (the server also refuses).
+//   • 🔒 Password chip: protects the new link with a password (6–128 characters).
 export default function LinkForm({ variant = "hero", onCreated }) {
   const formRef = useRef(null);
   const [error, setError] = useState(""); // shown under the URL box
@@ -32,6 +51,30 @@ export default function LinkForm({ variant = "hero", onCreated }) {
   // `request` is kept so "Create a new one" can send the same thing again.
   const [duplicate, setDuplicate] = useState(null); // { existing, request } | null
   const [duplicateError, setDuplicateError] = useState("");
+  // Card variant: today's quota { limit, used, remaining }, null until loaded.
+  const [quota, setQuota] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+
+  const isCard = variant === "card";
+
+  // Load the quota once when the dashboard form appears.
+  // `ignore` stops a late answer from updating a form that is already gone.
+  useEffect(() => {
+    if (!isCard) return;
+    let ignore = false;
+    fetchQuota().then((latest) => {
+      if (!ignore && latest) setQuota(latest);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [isCard]);
+
+  async function loadQuota() {
+    const latest = await fetchQuota();
+    if (latest) setQuota(latest);
+  }
 
   // Sends one create request and handles every kind of answer.
   async function createLink(request) {
@@ -61,6 +104,7 @@ export default function LinkForm({ variant = "hero", onCreated }) {
 
       // 201 { link }: done.
       formRef.current?.reset();
+      setShowPassword(false);
       setDuplicate(null);
       onCreated?.(body.link, { existing: false });
     } catch {
@@ -69,6 +113,8 @@ export default function LinkForm({ variant = "hero", onCreated }) {
       else setError(message);
     } finally {
       setLoading(false);
+      // The count changes after a create (and a 429 means our number was old).
+      if (isCard) loadQuota();
     }
   }
 
@@ -76,6 +122,7 @@ export default function LinkForm({ variant = "hero", onCreated }) {
     event.preventDefault();
     setError("");
     setAliasError("");
+    setPasswordError("");
     const form = new FormData(event.currentTarget);
 
     // Same URL rules as the server (lib/validators.js), so obvious mistakes
@@ -91,6 +138,17 @@ export default function LinkForm({ variant = "hero", onCreated }) {
     const request = { longUrl: parsed.data };
     const alias = String(form.get("alias") ?? "").trim();
     if (alias) request.alias = alias;
+
+    // Password chip (card only). An empty box means "no password".
+    const password = String(form.get("password") ?? "");
+    if (isCard && showPassword && password.trim()) {
+      const checked = linkPasswordSchema.safeParse(password);
+      if (!checked.success) {
+        setPasswordError(firstIssue(checked.error));
+        return;
+      }
+      request.password = checked.data;
+    }
 
     await createLink(request);
   }
@@ -140,10 +198,13 @@ export default function LinkForm({ variant = "hero", onCreated }) {
     </label>
   );
 
+  // No links left today: Shorten can't be used until midnight (India time).
+  const outOfLinks = isCard && quota !== null && quota.remaining <= 0;
+
   const button = (
     <button
       type="submit"
-      disabled={loading}
+      disabled={loading || outOfLinks}
       className="rounded-xl bg-linear-to-r from-violet-500 to-cyan-500 px-7 py-3.5 font-semibold text-white shadow-lg shadow-violet-500/30 hover:opacity-90 disabled:opacity-60"
     >
       {loading && !duplicate ? "Shortening…" : isHero ? "Shorten ⚡" : "Shorten"}
@@ -224,7 +285,20 @@ export default function LinkForm({ variant = "hero", onCreated }) {
       noValidate
       className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm"
     >
-      <h2 className="mb-3 font-semibold">Create a short link</h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">Create a short link</h2>
+        {/* "● 37 of 50 left today" (screen 06). */}
+        {quota && (
+          <p
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+              outOfLinks ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${outOfLinks ? "bg-red-500" : "bg-emerald-500"}`} />
+            {quota.remaining} of {quota.limit} left today
+          </p>
+        )}
+      </div>
       {/* URL · / alias (optional) · Shorten, in one row (screen 06). */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="flex flex-1 flex-col">
@@ -245,6 +319,44 @@ export default function LinkForm({ variant = "hero", onCreated }) {
         </div>
         {button}
       </div>
+
+      {outOfLinks && (
+        <p role="status" className="mt-2 text-sm text-red-600">
+          You have used all {quota.limit} links for today. You can create more after midnight (India time).
+        </p>
+      )}
+
+      {/* Advanced: 🔒 Password (screen 06). Expiry and max-clicks chips come in their own task. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-zinc-500">Advanced:</span>
+        <button
+          type="button"
+          onClick={() => {
+            setShowPassword((open) => !open);
+            setPasswordError("");
+          }}
+          aria-expanded={showPassword}
+          aria-controls="link-password"
+          className={`rounded-full border px-3 py-1 ${
+            showPassword ? "border-violet-300 bg-violet-50 text-violet-700" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+          }`}
+        >
+          🔒 Password
+        </button>
+        {showPassword && (
+          <input
+            id="link-password"
+            name="password"
+            type="password"
+            autoComplete="new-password"
+            aria-label="Link password"
+            aria-invalid={Boolean(passwordError)}
+            placeholder="Link password (6+ characters)"
+            className="w-64 rounded-lg border border-zinc-300 px-3 py-1.5 text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-violet-500 focus:ring-4 focus:ring-violet-100"
+          />
+        )}
+      </div>
+      {errorText(passwordError, "password-error")}
       {prompt}
     </form>
   );
