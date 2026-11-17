@@ -193,6 +193,50 @@ PASS: the limit held under parallel clicks.
 
 The same check runs in `npm test` (`tests/redirect.test.js`).
 
+## Daily link limit test (CMT-42, PRD FR-11, T11)
+
+A user can create **50 links a day**. If 60 creates arrive at the same moment,
+**exactly 50** must succeed and the other 10 must get `429 DAILY_LIMIT_REACHED`.
+The limit uses Redis `INCR` (`lib/rateLimit.js`), which is atomic, so parallel
+requests can't slip past it. A create that fails validation (bad URL) must not
+use up any of the 50.
+
+The script signs up a fresh test user, sends 3 bad creates, then 60 creates at
+once, and deletes the user, their links and the Redis counter at the end.
+Run it with the app running (`npm run dev`), in a second terminal:
+
+```
+npm run try:limit
+```
+
+Result on 17 Nov 2026 (local dev server, real MongoDB and Redis):
+
+```
+Test user limit-64691870@comets-test.dev, daily limit = 50
+
+3 creates with a bad URL : 400, 400, 400   (expected 400 each)
+Counter after bad creates  : 0   (expected 0: nothing used up)
+
+Sending 60 creates at the same time to http://localhost:3000 ...
+
+201 Created               : 50   (expected 50)
+429 DAILY_LIMIT_REACHED   : 10   (expected 10)
+429s have rate-limit headers : NO
+   429 DAILY_LIMIT_REACHED  limit=50 remaining=0 retry-after=8651
+   429 DAILY_LIMIT_REACHED  limit=50 remaining=0 retry-after=8651
+   429 DAILY_LIMIT_REACHED  limit=null remaining=null retry-after=null
+   (… 7 more without headers)
+Links saved in MongoDB    : 50   (expected 50)
+Redis counter             : 50   (expected 50)
+
+FAIL: see the numbers above.
+```
+
+The limit holds (T11 passes: 50 created, 10 refused). The FAIL is only the
+headers: 429s from the MongoDB quota check in `POST /api/links`
+(`getDailyQuota`, CMT-44) are sent before the Redis check and carry no
+`X-RateLimit-*` / `Retry-After` headers. Open for the owners of CMT-43/CMT-44.
+
 ## How we work
 
 1. Pull the latest `develop` branch.
