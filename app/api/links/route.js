@@ -4,6 +4,7 @@ import { generateCode } from "@/lib/codeGen";
 import { connectDB } from "@/lib/db";
 import { apiError, readJson } from "@/lib/errors";
 import { publicLink } from "@/lib/links";
+import { clientIp, giveBackDailyLink, rateLimitHeaders, takeDailyLink } from "@/lib/rateLimit";
 import { getHitsForLinks, getStatus } from "@/lib/linkStatus";
 import { getDailyQuota } from "@/lib/quota";
 import {
@@ -85,7 +86,8 @@ const MAX_TRIES = 5;
 //   → 200 { duplicate: true, existing }  logged-in user already shortened this URL
 //   → 409 ALIAS_TAKEN                    someone already has this alias
 //   → 401 UNAUTHORIZED                   a guest sent expiresAt or maxClicks
-//   → 429 DAILY_LIMIT_REACHED            logged-in user used today's links (CMT-44)
+//   → 429 DAILY_LIMIT_REACHED            today's links are used up: 50 per user (CMT-44),
+//                                        10 per guest IP (CMT-43), with X-RateLimit-* headers
 // Works for guests (no cookie) and for logged-in users (board tasks CMT-12, CMT-15).
 export async function POST(request) {
   const parsed = createLinkSchema.safeParse(await readJson(request));
@@ -145,15 +147,36 @@ export async function POST(request) {
     }
   }
 
+  // Hard daily limit (CMT-43): an atomic Redis counter, for users AND guests.
+  // The MongoDB count above shows a friendly message; this is the guard that
+  // stays exact even when 60 requests arrive at once (PRD test T11).
+  const taken = await takeDailyLink(
+    user ? { userId: String(user._id), limit: user.dailyLinkLimit } : { ip: clientIp(request) },
+  );
+  if (!taken.ok) {
+    const message = user
+      ? `You have used all ${taken.limit} links for today. You can create more after midnight (India time).`
+      : `Guests can create ${taken.limit} links a day. Log in for more, or try again after midnight (India time).`;
+    const res = apiError("DAILY_LIMIT_REACHED", message, 429);
+    for (const [name, value] of Object.entries(rateLimitHeaders(taken))) res.headers.set(name, value);
+    res.headers.set("Retry-After", String(taken.reset - Math.floor(Date.now() / 1000)));
+    return res;
+  }
+
+  // 201 with the rate-limit headers, so API clients see what is left today.
+  const created = (link) =>
+    Response.json({ link: publicLink(link) }, { status: 201, headers: rateLimitHeaders(taken) });
+
   // Custom alias: one try only. We don't ask "is this alias free?" first,
   // because two people could both get "yes" at the same moment. We just
   // insert, and the unique index on `code` lets exactly one of them win;
   // the other gets error 11000, which we turn into 409.
   if (alias) {
     try {
-      const link = await LinkModel.create({ ...fields, code: alias, isCustomAlias: true });
-      return Response.json({ link: publicLink(link) }, { status: 201 });
+      return created(await LinkModel.create({ ...fields, code: alias, isCustomAlias: true }));
     } catch (error) {
+      // Nothing was created, so this try doesn't use up today's allowance.
+      await giveBackDailyLink(taken);
       if (error?.code === 11000 && error.keyPattern?.code) {
         return apiError("ALIAS_TAKEN", "This alias is already taken. Please try another one.", 409);
       }
@@ -172,11 +195,15 @@ export async function POST(request) {
     } catch (error) {
       // Only a clash on `code` is worth retrying; anything else is a real error.
       const codeClash = error?.code === 11000 && error.keyPattern?.code;
-      if (!codeClash) throw error;
+      if (!codeClash) {
+        await giveBackDailyLink(taken);
+        throw error;
+      }
     }
   }
 
   if (!link) {
+    await giveBackDailyLink(taken);
     return apiError(
       "CODE_GENERATION_FAILED",
       "Could not create a short link. Please try again.",
@@ -185,5 +212,5 @@ export async function POST(request) {
   }
 
   // publicLink() is shared with GET, so both routes send links in the same shape.
-  return Response.json({ link: publicLink(link) }, { status: 201 });
+  return created(link);
 }
