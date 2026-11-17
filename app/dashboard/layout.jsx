@@ -4,7 +4,7 @@ import LogoutButton from "./logout-button";
 const navigation = [
   { label: "Overview", href: "/dashboard" },
   { label: "My links", href: "/dashboard/links" },
-  { label: "API keys", href: "/dashboard/keys" },
+  { label: "API keys", href: "/dashboard/api-keys" },
 ];
 
 export default function DashboardLayout({ children }) {

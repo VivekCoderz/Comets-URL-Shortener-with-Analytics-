@@ -158,6 +158,105 @@ Pro plan and payment endpoints will be added once FR-15 is decided.
 | 422 | URL flagged as unsafe |
 | 429 | Rate limit or daily link limit reached |
 
+## Public API: curl examples (CMT-46, PRD FR-12)
+
+Other apps can create links and read analytics with an **API key**.
+
+> The `/api/v1` routes are board task CMT-49 and the key check is CMT-48. The
+> examples below follow the contract in the table above; check them again once
+> those PRs are merged.
+
+### 1. Get a key
+
+1. Log in and open **Dashboard → API keys** (`/dashboard/api-keys`).
+2. Give the key a name and pick what it may do:
+
+   | Scope | Allows |
+   |---|---|
+   | `links:read` | `GET /api/v1/links` |
+   | `links:write` | `POST /api/v1/links` |
+   | `analytics:read` | `GET /api/v1/links/:code/analytics` |
+
+3. Click **Create key** and copy it straight away. The full key
+   (`sk_` + 32 characters) is shown **only once**. After that the page shows
+   only its first 8 characters (`sk_Xq3vA…`), because we store just a hash.
+   Lost it? Revoke it and create a new one. You can have up to 5 active keys.
+
+Send the key in every request as `Authorization: Bearer sk_…`. In the examples,
+set these first (Git Bash, macOS or Linux):
+
+```bash
+export BASE=http://localhost:3000        # or your Vercel URL
+export KEY=sk_paste_your_key_here
+```
+
+### 2. Create a link (scope `links:write`)
+
+```bash
+curl -X POST "$BASE/api/v1/links" \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "longUrl": "https://example.com/geeta-fest-2026", "alias": "geeta-fest" }'
+```
+
+`alias`, `expiresAt` (ISO date) and `maxClicks` are optional. Answer `201`:
+
+```json
+{
+  "link": {
+    "id": "6735…",
+    "code": "geeta-fest",
+    "shortUrl": "http://localhost:3000/geeta-fest",
+    "longUrl": "https://example.com/geeta-fest-2026",
+    "isActive": true,
+    "expiresAt": null,
+    "maxClicks": null,
+    "totalClicks": 0,
+    "createdAt": "2026-11-17T10:00:00.000Z"
+  }
+}
+```
+
+API creates count toward the same **50 links a day** as the dashboard. Every
+answer carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and
+`X-RateLimit-Reset` (Unix time of the next midnight in India). Add `-i` to curl
+to see them.
+
+### 3. List your links (scope `links:read`)
+
+```bash
+curl "$BASE/api/v1/links?page=1&limit=20" \
+  -H "Authorization: Bearer $KEY"
+```
+
+Answer `200`: `{ "links": [ … ], "page": 1, "limit": 20, "total": 42 }`, newest
+first. `limit` can be 1 to 100.
+
+### 4. Analytics of one link (scope `analytics:read`)
+
+```bash
+curl "$BASE/api/v1/links/geeta-fest/analytics?range=30" \
+  -H "Authorization: Bearer $KEY"
+```
+
+`range` is `7`, `30` or `90` days (default `7`). Answer `200`: totals (clicks,
+unique clicks, refreshes), a daily series with every day filled in (0 on days
+without clicks) and breakdowns (country, device, browser, referrer).
+
+### Errors
+
+Errors use the same shape as the rest of the API:
+`{ "error": { "code": "…", "message": "…" } }`.
+
+| Status | When |
+|---|---|
+| 400 | Bad body or query (`INVALID_URL`, `INVALID_ALIAS`, `VALIDATION_ERROR`) |
+| 401 | No key, unknown key or revoked key |
+| 403 | The key doesn't have the scope this endpoint needs |
+| 404 | No link with this code, or it belongs to someone else |
+| 409 | `ALIAS_TAKEN` |
+| 429 | `DAILY_LIMIT_REACHED`, or more than 60 requests a minute with one key. Wait for `Retry-After` seconds |
+
 ## Click limit test (CMT-30, PRD FR-08, T8)
 
 A link with `maxClicks: 10` must let **exactly 10** people through, even when
