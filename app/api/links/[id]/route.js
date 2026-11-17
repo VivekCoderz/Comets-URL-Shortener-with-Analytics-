@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, hashPassword } from "@/lib/auth";
 import { apiError, readJson } from "@/lib/errors";
 import { deleteLinkCache } from "@/lib/linkCache";
 import { publicLink } from "@/lib/links";
@@ -18,13 +18,17 @@ async function findOwnLink(id, user) {
   // A bad id (e.g. "abc") can't match anything, so treat it as not found
   // instead of letting MongoDB throw a CastError.
   if (!mongoose.isValidObjectId(id)) return null;
-  return LinkModel.findOne({ _id: id, userId: user._id, isDeleted: false });
+  // +passwordHash so publicLink() can send hasPassword, and so PATCH can
+  // tell whether a password is set (the hash is hidden by default).
+  return LinkModel.findOne({ _id: id, userId: user._id, isDeleted: false }).select("+passwordHash");
 }
 
-// PATCH /api/links/[id]  { longUrl?, title?, isActive?, expiresAt?, maxClicks? }  →  200 { link }
+// PATCH /api/links/[id]  { longUrl?, title?, isActive?, expiresAt?, maxClicks?, password? }  →  200 { link }
 // expiresAt / maxClicks: null removes the limit (CMT-32). Moving the expiry date
 // into the future, or raising the click limit, makes an expired link work again.
 // The click counter in Redis (link:hits:{code}) is NOT reset when maxClicks changes.
+// password (CMT-44): a new password (6–128 characters) sets or replaces it,
+// null removes it, so the link opens directly again.
 export async function PATCH(request, { params }) {
   const user = await getCurrentUser(); // also connects to MongoDB
   if (!user) return apiError("UNAUTHORIZED", "Please log in", 401);
@@ -38,14 +42,21 @@ export async function PATCH(request, { params }) {
 
   // Only change the fields that were sent. Zod already removed any other
   // fields (like `code` or `userId`), so nobody can change those.
-  for (const [field, value] of Object.entries(parsed.data)) {
+  const { password, ...fields } = parsed.data;
+  for (const [field, value] of Object.entries(fields)) {
     if (value !== undefined) link[field] = value;
   }
+
+  // We only ever store the bcrypt hash, never the password itself.
+  // Setting the field to undefined makes Mongoose remove it from the document.
+  if (password === null) link.passwordHash = undefined;
+  else if (password !== undefined) link.passwordHash = await hashPassword(password);
   await link.save();
 
   // Remove the old cached copy so the redirect uses the new destination, the
   // new active/disabled state, or the new expiry date / click limit (CMT-32) on
-  // the very next click (PRD FR-05, T6).
+  // the very next click (PRD FR-05, T6). Same for a password that was set or
+  // removed: the cached copy holds hasPassword (CMT-44).
   await deleteLinkCache(link.code);
   return Response.json({ link: publicLink(link) });
 }

@@ -5,6 +5,7 @@ import { connectDB } from "@/lib/db";
 import { apiError, readJson } from "@/lib/errors";
 import { publicLink } from "@/lib/links";
 import { getHitsForLinks, getStatus } from "@/lib/linkStatus";
+import { getDailyQuota } from "@/lib/quota";
 import {
   aliasSchema,
   expiresAtSchema,
@@ -35,7 +36,9 @@ export async function GET(request) {
   // Run both queries at the same time. The index { userId: 1, createdAt: -1 }
   // on the Link model makes "my newest links" fast.
   const [links, total] = await Promise.all([
+    // +passwordHash only so publicLink() can send hasPassword (the 🔒 in the table, CMT-44).
     LinkModel.find(filter)
+      .select("+passwordHash")
       .sort({ createdAt: -1, _id: -1 }) // _id breaks ties so pages never repeat a link
       .skip((page - 1) * limit)
       .limit(limit),
@@ -82,6 +85,7 @@ const MAX_TRIES = 5;
 //   → 200 { duplicate: true, existing }  logged-in user already shortened this URL
 //   → 409 ALIAS_TAKEN                    someone already has this alias
 //   → 401 UNAUTHORIZED                   a guest sent expiresAt or maxClicks
+//   → 429 DAILY_LIMIT_REACHED            logged-in user used today's links (CMT-44)
 // Works for guests (no cookie) and for logged-in users (board tasks CMT-12, CMT-15).
 export async function POST(request) {
   const parsed = createLinkSchema.safeParse(await readJson(request));
@@ -118,9 +122,26 @@ export async function POST(request) {
   // forceNew: true means the user picked "create new", so we skip this.
   if (user && forceNew !== true) {
     const existing = await LinkModel.findOne({ userId: user._id, longUrl, isDeleted: false })
+      .select("+passwordHash") // for hasPassword in publicLink() (CMT-44)
       .sort({ createdAt: -1 }); // if there are several, show the newest
     if (existing) {
       return Response.json({ duplicate: true, existing: publicLink(existing) }, { status: 200 });
+    }
+  }
+
+  // Daily limit for logged-in users (CMT-44, team decision: blocked on the
+  // server too, not only in the form). Checked after the duplicate check,
+  // because "use existing link" creates nothing. Guests are not counted here.
+  // Two requests at the very same moment could both pass at 49; that is
+  // accepted for now (the Day 11 rate limit is the hard guard).
+  if (user) {
+    const quota = await getDailyQuota(user);
+    if (quota.remaining <= 0) {
+      return apiError(
+        "DAILY_LIMIT_REACHED",
+        `You have used all ${quota.limit} links for today. You can create more after midnight (India time).`,
+        429,
+      );
     }
   }
 

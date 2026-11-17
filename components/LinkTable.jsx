@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import CopyButton from "@/components/CopyButton";
 import Modal from "@/components/Modal";
-import { firstIssue, longUrlSchema } from "@/lib/validators";
+import { firstIssue, linkPasswordSchema, longUrlSchema } from "@/lib/validators";
 
 // "3 Nov": dates are shown in IST, the same day boundary as the rest of the app (PRD 7.8).
 const dateFormat = new Intl.DateTimeFormat("en-IN", {
@@ -86,7 +86,15 @@ export default function LinkTable({ refreshKey = 0 }) {
           <tbody className="divide-y divide-zinc-100">
             {state.links.map((link) => (
               <tr key={link.id}>
-                <td className="px-5 py-4 font-mono font-semibold text-violet-600">/{link.code}</td>
+                <td className="px-5 py-4 font-mono font-semibold whitespace-nowrap text-violet-600">
+                  /{link.code}
+                  {/* 🔒 = password-protected (screen 06, CMT-44). */}
+                  {link.hasPassword && (
+                    <span title="Password-protected" aria-label="Password-protected" className="ml-1.5">
+                      🔒
+                    </span>
+                  )}
+                </td>
                 {/* Long URLs are cut short; the full URL shows on hover (PRD FR-14). */}
                 <td className="max-w-xs truncate px-5 py-4 text-zinc-600" title={link.longUrl}>
                   {link.longUrl.replace(/^https?:\/\//, "")}
@@ -169,11 +177,27 @@ async function sendChange(id, method, data) {
   }
 }
 
-// Edit popup: destination URL and title, the first two fields of screen 09.
-// Expiry, max clicks and password are added to editing on their own days.
+// Edit popup: destination URL and title (screen 09), and the link password (CMT-44).
+// Expiry and max clicks are added to editing on their own day.
+//
+// Password:
+//   no password yet → an optional "Password" box; filling it protects the link.
+//   has a password  → "Password protected" + a "Remove password" button (saves
+//                     at once), and an optional box to change it.
+// An empty box never changes anything. We never see the old password, only
+// link.hasPassword.
 function EditLinkPopup({ link, onClose, onSaved }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  async function removePassword() {
+    setError("");
+    setSaving(true);
+    const message = await sendChange(link.id, "PATCH", { password: null });
+    setSaving(false);
+    if (message) setError(message);
+    else onSaved();
+  }
 
   function close() {
     setError("");
@@ -191,10 +215,21 @@ function EditLinkPopup({ link, onClose, onSaved }) {
       return;
     }
     const title = String(form.get("title") ?? "").trim();
+    // An empty title box removes the title (null).
+    const change = { longUrl: parsed.data, title: title || null };
+
+    const password = String(form.get("password") ?? "");
+    if (password.trim()) {
+      const checked = linkPasswordSchema.safeParse(password);
+      if (!checked.success) {
+        setError(firstIssue(checked.error));
+        return;
+      }
+      change.password = checked.data;
+    }
 
     setSaving(true);
-    // An empty title box removes the title (null).
-    const message = await sendChange(link.id, "PATCH", { longUrl: parsed.data, title: title || null });
+    const message = await sendChange(link.id, "PATCH", change);
     setSaving(false);
     if (message) setError(message);
     else onSaved();
@@ -222,6 +257,31 @@ function EditLinkPopup({ link, onClose, onSaved }) {
               name="title"
               defaultValue={link.title ?? ""}
               placeholder="Geeta Fest registrations"
+              className={inputClass}
+            />
+          </label>
+
+          {link.hasPassword && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-zinc-50 px-4 py-3 text-sm">
+              <span className="font-medium">🔒 Password protected</span>
+              <button
+                type="button"
+                onClick={removePassword}
+                disabled={saving}
+                className={`${smallButton} text-red-600 disabled:opacity-60`}
+              >
+                Remove password
+              </button>
+            </div>
+          )}
+
+          <label className="flex flex-col gap-1.5 text-sm font-medium">
+            {link.hasPassword ? "Change password (optional)" : "Password (optional)"}
+            <input
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              placeholder={link.hasPassword ? "Leave empty to keep the current one" : "6+ characters"}
               className={inputClass}
             />
           </label>
