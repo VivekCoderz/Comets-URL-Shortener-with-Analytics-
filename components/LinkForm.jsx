@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import DuplicatePrompt from "@/components/DuplicatePrompt";
 import { getEnv } from "@/lib/env";
-import { firstIssue, linkPasswordSchema, longUrlSchema } from "@/lib/validators";
+import {
+  firstIssue,
+  linkPasswordSchema,
+  longUrlSchema,
+  UNSAFE_URL_MESSAGE,
+  UNSAFE_URL_STATUS,
+} from "@/lib/validators";
 
 // "comets.vercel.app/" shown in front of the alias box (screen 01).
 const shortHost = `${new URL(getEnv({ publicOnly: true }).NEXT_PUBLIC_BASE_URL).host}/`;
@@ -89,7 +95,11 @@ export default function LinkForm({ variant = "hero", onCreated }) {
 
       if (!res.ok) {
         // Every API error is { error: { code, message } } (PRD section 9).
-        const message = body?.error?.message ?? "Something went wrong. Please try again.";
+        // 422 = Safe Browsing flagged the URL (CMT-50): always the same clear text.
+        const message =
+          res.status === UNSAFE_URL_STATUS
+            ? UNSAFE_URL_MESSAGE
+            : (body?.error?.message ?? "Something went wrong. Please try again.");
         if (duplicate) setDuplicateError(message); // popup is open: show it there
         else if (ALIAS_ERRORS.includes(body?.error?.code)) setAliasError(message);
         else setError(message);
