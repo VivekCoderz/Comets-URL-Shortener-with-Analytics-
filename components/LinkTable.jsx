@@ -3,7 +3,30 @@
 import { useEffect, useState } from "react";
 import CopyButton from "@/components/CopyButton";
 import Modal from "@/components/Modal";
-import { firstIssue, linkPasswordSchema, longUrlSchema } from "@/lib/validators";
+import {
+  firstIssue,
+  linkPasswordSchema,
+  longUrlSchema,
+  UNSAFE_URL_MESSAGE,
+  UNSAFE_URL_STATUS,
+} from "@/lib/validators";
+
+// Safety badge per link (CMT-50, PRD FR-13): the Safe Browsing result.
+// "Unchecked" = Google couldn't be reached yet; the re-check job (CMT-53) retries.
+const SAFETY_BADGES = {
+  safe: { label: "Safe", className: "bg-emerald-100 text-emerald-700" },
+  unchecked: { label: "Unchecked", className: "bg-zinc-100 text-zinc-600" },
+  unsafe: { label: "Unsafe", className: "bg-red-100 text-red-700" },
+};
+
+function SafetyBadge({ status }) {
+  const badge = SAFETY_BADGES[status] ?? SAFETY_BADGES.unchecked;
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ${badge.className}`}>
+      {badge.label}
+    </span>
+  );
+}
 
 // "3 Nov": dates are shown in IST, the same day boundary as the rest of the app (PRD 7.8).
 const dateFormat = new Intl.DateTimeFormat("en-IN", {
@@ -78,6 +101,7 @@ export default function LinkTable({ refreshKey = 0 }) {
             <tr>
               <th className="px-5 py-3 font-medium">Short link</th>
               <th className="px-5 py-3 font-medium">Destination</th>
+              <th className="px-5 py-3 font-medium">Safety</th>
               <th className="px-5 py-3 font-medium">Clicks</th>
               <th className="px-5 py-3 font-medium">Created</th>
               <th className="px-5 py-3 text-right font-medium">Actions</th>
@@ -98,6 +122,9 @@ export default function LinkTable({ refreshKey = 0 }) {
                 {/* Long URLs are cut short; the full URL shows on hover (PRD FR-14). */}
                 <td className="max-w-xs truncate px-5 py-4 text-zinc-600" title={link.longUrl}>
                   {link.longUrl.replace(/^https?:\/\//, "")}
+                </td>
+                <td className="px-5 py-4">
+                  <SafetyBadge status={link.safetyStatus} />
                 </td>
                 <td className="px-5 py-4 font-semibold">{numberFormat.format(link.totalClicks)}</td>
                 <td className="px-5 py-4 whitespace-nowrap text-zinc-600">
@@ -170,6 +197,8 @@ async function sendChange(id, method, data) {
       body: data ? JSON.stringify(data) : undefined,
     });
     if (res.ok) return "";
+    // Editing to a URL Safe Browsing flags is refused with 422 too (CMT-50).
+    if (res.status === UNSAFE_URL_STATUS) return UNSAFE_URL_MESSAGE;
     const body = await res.json().catch(() => null);
     return body?.error?.message ?? "Something went wrong. Please try again.";
   } catch {
