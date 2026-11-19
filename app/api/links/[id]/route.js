@@ -3,6 +3,7 @@ import { getCurrentUser, hashPassword } from "@/lib/auth";
 import { apiError, readJson } from "@/lib/errors";
 import { deleteLinkCache } from "@/lib/linkCache";
 import { publicLink } from "@/lib/links";
+import { checkUrlSafety, UNSAFE_URL_MESSAGE } from "@/lib/safeBrowsing";
 import { editLinkSchema, firstIssue } from "@/lib/validators";
 import { LinkModel } from "@/models/Link";
 
@@ -29,6 +30,7 @@ async function findOwnLink(id, user) {
 // The click counter in Redis (link:hits:{code}) is NOT reset when maxClicks changes.
 // password (CMT-44): a new password (6–128 characters) sets or replaces it,
 // null removes it, so the link opens directly again.
+// longUrl (CMT-52): a new destination is checked with Safe Browsing → 422 if flagged.
 export async function PATCH(request, { params }) {
   const user = await getCurrentUser(); // also connects to MongoDB
   if (!user) return apiError("UNAUTHORIZED", "Please log in", 401);
@@ -43,6 +45,16 @@ export async function PATCH(request, { params }) {
   // Only change the fields that were sent. Zod already removed any other
   // fields (like `code` or `userId`), so nobody can change those.
   const { password, ...fields } = parsed.data;
+
+  // A new destination gets the same Safe Browsing check as a new link
+  // (CMT-52, PRD FR-13). Checked before anything changes, so a flagged
+  // URL leaves the link exactly as it was.
+  if (fields.longUrl !== undefined) {
+    const safetyStatus = await checkUrlSafety(fields.longUrl);
+    if (safetyStatus === "unsafe") return apiError("UNSAFE_URL", UNSAFE_URL_MESSAGE, 422);
+    link.safetyStatus = safetyStatus;
+    link.safetyCheckedAt = safetyStatus === "unchecked" ? null : new Date();
+  }
   for (const [field, value] of Object.entries(fields)) {
     if (value !== undefined) link[field] = value;
   }

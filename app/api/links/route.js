@@ -7,6 +7,7 @@ import { publicLink } from "@/lib/links";
 import { clientIp, giveBackDailyLink, rateLimitHeaders, takeDailyLink } from "@/lib/rateLimit";
 import { getHitsForLinks, getStatus } from "@/lib/linkStatus";
 import { getDailyQuota } from "@/lib/quota";
+import { checkUrlSafety, UNSAFE_URL_MESSAGE } from "@/lib/safeBrowsing";
 import {
   aliasSchema,
   expiresAtSchema,
@@ -86,6 +87,7 @@ const MAX_TRIES = 5;
 //   → 200 { duplicate: true, existing }  logged-in user already shortened this URL
 //   → 409 ALIAS_TAKEN                    someone already has this alias
 //   → 401 UNAUTHORIZED                   a guest sent expiresAt or maxClicks
+//   → 422 UNSAFE_URL                     Safe Browsing or our blocklist flagged the URL (CMT-52)
 //   → 429 DAILY_LIMIT_REACHED            today's links are used up: 50 per user (CMT-44),
 //                                        10 per guest IP (CMT-43), with X-RateLimit-* headers
 // Works for guests (no cookie) and for logged-in users (board tasks CMT-12, CMT-15).
@@ -105,6 +107,11 @@ export async function POST(request) {
     return apiError("UNAUTHORIZED", "Log in to set an expiry date or click limit", 401);
   }
 
+  // Safe Browsing (CMT-52, PRD FR-13): refuse flagged URLs before anything is
+  // saved or counted. If Google can't be asked, the link is saved as "unchecked".
+  const safetyStatus = await checkUrlSafety(longUrl);
+  if (safetyStatus === "unsafe") return apiError("UNSAFE_URL", UNSAFE_URL_MESSAGE, 422);
+
   // Fields every new link gets, with or without an alias.
   // expiresAt / maxClicks stay null (= no limit) when they were not sent.
   const fields = {
@@ -113,6 +120,8 @@ export async function POST(request) {
     createdVia: user ? "dashboard" : "guest",
     expiresAt: expiresAt ?? null,
     maxClicks: maxClicks ?? null,
+    safetyStatus,
+    safetyCheckedAt: safetyStatus === "unchecked" ? null : new Date(),
   };
 
   // getCurrentUser() only connects when there is a cookie, so connect for guests too.
