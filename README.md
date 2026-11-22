@@ -61,6 +61,9 @@ Open `.env.local` and replace each placeholder with your real value:
 | `UPSTASH_REDIS_REST_URL` | Upstash → REST API |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash → REST API |
 | `NEXT_PUBLIC_BASE_URL` | `http://localhost:3000` on your laptop |
+| `JWT_SECRET` | Any random string, at least 32 characters (signs the login cookie) |
+| `VISITOR_HASH_SALT` | Any random string, at least 32 characters (click analytics visitor hash) |
+| `CRON_SECRET` | Optional locally; at least 16 characters. The scheduler sends it to `POST /api/cron/flush-clicks` |
 
 > **`.env.example` vs `.env.local`:** `.env.example` is committed to Git and only shows *which* variables are needed, with fake values. `.env.local` holds your *real* secrets, is read by Next.js when the app starts, and is ignored by Git so it is never pushed to GitHub.
 

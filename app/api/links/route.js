@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { generateCode } from "@/lib/codeGen";
 import { connectDB } from "@/lib/db";
 import { apiError, readJson } from "@/lib/errors";
+import { deleteLinkCache } from "@/lib/linkCache";
 import { publicLink } from "@/lib/links";
 import { getHitsForLinks, getStatus } from "@/lib/linkStatus";
 import {
@@ -131,6 +132,12 @@ export async function POST(request) {
   if (alias) {
     try {
       const link = await LinkModel.create({ ...fields, code: alias, isCustomAlias: true });
+      // If someone opened /<alias> before it existed, the redirect cached it as
+      // "not found" for 60 s. Clear that so the new link works right away.
+      // Best effort: the link is already saved, so a Redis error must not fail the request.
+      await deleteLinkCache(alias).catch((error) =>
+        console.warn(`[redis] del link:${alias} failed: ${error?.message ?? error}`),
+      );
       return Response.json({ link: publicLink(link) }, { status: 201 });
     } catch (error) {
       if (error?.code === 11000 && error.keyPattern?.code) {
