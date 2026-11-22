@@ -39,3 +39,6 @@ yarn-error.log*
 
 # but do commit the example file
 !.env.example
+
+# binaries
+*.exe
